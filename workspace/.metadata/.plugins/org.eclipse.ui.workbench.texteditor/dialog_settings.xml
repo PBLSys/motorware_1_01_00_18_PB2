@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<section name="Workbench">
+	<section name="org.eclipse.ui.texteditor.FindReplaceDialog">
+		<item value="false" key="isRegEx"/>
+		<item value="_IQtoF" key="selection"/>
+		<item value="false" key="casesensitive"/>
+		<item value="false" key="incremental"/>
+		<item value="true" key="wrap"/>
+		<item value="false" key="wholeword"/>
+		<list key="findhistory">
+			<item value="_IQtoF"/>
+			<item value="disable_inertia_friction_compensation"/>
+			<item value="enable_inertia_compensation_force"/>
+			<item value="log_array_start"/>
+			<item value="force_enabled_other_motor"/>
+			<item value="danger_flag"/>
+			<item value="Set_wt_centilb_other_motor"/>
+			<item value="HAL_readGpio"/>
+			<item value="enable_serial"/>
+			<item value="range_of_motion_and_rep_counter"/>
+			<item value="Status_motor"/>
+			<item value="platform_to_roller_decimm"/>
+			<item value="platform_to_roller_mm"/>
+			<item value="start_force_position_max"/>
+			<item value="start_force_position_mm_used_max"/>
+		</list>
+		<list key="replacehistory">
+			<item value="ms_since_last_incoming_packet_from_App"/>
+		</list>
+	</section>
+	<section name="org.eclipse.ui.texteditor.FindReplaceDialog_dialogBounds">
+		<item value="284" key="DIALOG_WIDTH"/>
+		<item value="1|Segoe UI|9.0|0|WINDOWS|1|-12|0|0|0|400|0|0|0|1|0|0|0|0|Segoe UI" key="DIALOG_FONT_NAME"/>
+		<item value="391" key="DIALOG_HEIGHT"/>
+		<item value="1348" key="DIALOG_X_ORIGIN"/>
+		<item value="497" key="DIALOG_Y_ORIGIN"/>
+	</section>
+</section>

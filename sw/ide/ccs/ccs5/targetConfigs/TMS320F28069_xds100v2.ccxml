@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<configurations XML_version="1.2" id="configurations_0">
+<configuration XML_version="1.2" id="Texas Instruments XDS100v2 USB Debug Probe_0">
+        <instance XML_version="1.2" desc="Texas Instruments XDS100v2 USB Debug Probe_0" href="connections/TIXDS100v2_Connection.xml" id="Texas Instruments XDS100v2 USB Debug Probe_0" xml="TIXDS100v2_Connection.xml" xmlpath="connections"/>
+        <connection XML_version="1.2" desc="Texas Instruments XDS100v2 USB Debug Probe_0" id="Texas Instruments XDS100v2 USB Debug Probe_0">
+            <instance XML_version="1.2" href="drivers/tixds100v2c28x.xml" id="drivers" xml="tixds100v2c28x.xml" xmlpath="drivers"/>
+            <instance XML_version="1.2" href="drivers/tixds100v2cla.xml" id="drivers" xml="tixds100v2cla.xml" xmlpath="drivers"/>
+            <property Type="choicelist" Value="1" id="Emulator Selection">
+                <choice Name="Select by serial number" value="0">
+                    <property Type="stringfield" Value="100v2PB2" id="-- Enter the serial number"/>
+                </choice>
+            </property>
+            <platform XML_version="1.2" id="platform_0">
+                <instance XML_version="1.2" desc="TMS320F28069_0" href="devices/f28069.xml" id="TMS320F28069_0" xml="f28069.xml" xmlpath="devices"/>
+            <device HW_revision="1" XML_version="1.2" desc="TMS320F28069_0" description="" id="TMS320F28069_0" partnum="TMS320F28069" simulation="no"/>
+            </platform>
+        </connection>
+    </configuration>
+</configurations>

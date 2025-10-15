@@ -1,0 +1,3834 @@
+/* --COPYRIGHT--,BSD
+ * Copyright (c) 2012, Texas Instruments Incorporated
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * *  Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * *  Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * *  Neither the name of Texas Instruments Incorporated nor the names of
+ *    its contributors may be used to endorse or promote products derived
+ *    from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+ * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * --/COPYRIGHT--*/
+//! \file   solutions/instaspin_foc/src/proj_lab05a.c
+//! \brief Adjusting the FOC current controller
+//!
+//! (C) Copyright 2011, Texas Instruments, Inc.
+
+//! \defgroup PROJ_LAB05a PROJ_LAB05a
+//@{
+
+//! \defgroup PROJ_LAB05a_OVERVIEW Project Overview
+//!
+//! Adjusting the supplied current controllers
+//!
+
+// **************************************************************************
+// the includes
+
+// system includes
+#include <math.h>
+#include "main.h"
+
+#ifdef FLASH
+#pragma CODE_SECTION(mainISR,"ramfuncs");
+#endif
+
+// Include header files used in the main function
+
+
+// **************************************************************************
+// the defines
+
+#define LED_BLINK_FREQ_Hz                   5
+#define Undervoltage_bus_centiV                 4500
+
+#define HAL_GPIO_BUTTON1  GPIO_Number_56
+#define HAL_GPIO_BUTTON2  GPIO_Number_58
+#define HAL_GPIO_SOLENOID_BRAKE  GPIO_Number_10
+#define CIRCUMFERENCE_1TURN_mm                  (82.0) // for old poc device
+//#define CIRCUMFERENCE_1TURN_mm                (75.59) // for Rev6
+#define reciprocal_CIRCUMFERENCE_1TURN_mm       (1.0/CIRCUMFERENCE_1TURN_mm)
+#define start_force_position_mm_max             (2438)
+#define start_force_position_mm_used_max        (start_force_position_mm_max - platform_to_roller_mm)
+#define start_force_position_max                (((USER_MOTOR_START_TURN + ((float)start_force_position_mm_used_max * reciprocal_CIRCUMFERENCE_1TURN_mm)) * USER_COUNT_1TURN) - 1)
+
+/* Packet Headers */
+#define Position_Packet_Header              0x00A0
+#define Status_Packet_Header                0x00A1
+#define ForceSensor1_Header                 0x00A2
+#define ForceSensor2_Header                 0x00A3
+#define MotorForce_Measured_Header          0x00A4
+#define MotorForce_Setting_Header               0x00A5
+#define start_force_position_Setting_Header        0x00A6
+
+#define BLE_WAKEUP_STEP                     0x00C0
+#define BLE_WAIT_FOR_WAKEUP_STEP            0x00C1
+#define BLE_READ_MAC_ADDRESS_STEP1          0x00C2
+#define BLE_READ_MAC_ADDRESS_STEP2          0x00C3
+#define BLE_READ_MAC_ADDRESS_STEP3          0x00C4
+#define BLE_READ_BROADCAST_NAME_STEP1       0x00C5
+#define BLE_READ_BROADCAST_NAME_STEP2       0x00C6
+#define BLE_READ_BROADCAST_NAME_STEP3       0x00C7
+#define BLE_READ_BROADCAST_NAME_STEP4       0x00C8
+#define BLE_ASSIGN_BROADCAST_NAME_STEP1     0x00C9
+#define BLE_ASSIGN_BROADCAST_NAME_STEP2     0x00CA
+#define BLE_ASSIGN_BROADCAST_NAME_STEP3     0x00CB
+#define BLE_ASSIGN_BROADCAST_NAME_STEP4     0x00CC
+#define BLE_ASSIGN_BROADCAST_NAME_STEP5     0x00CD
+#define BLE_ASSIGN_BROADCAST_NAME_STEP6     0x00CE
+#define BLE_ASSIGN_BROADCAST_NAME_STEP7     0x00CF
+#define BLE_ASSIGN_DEVICE_NAME_STEP1        0x00D0
+#define BLE_ASSIGN_DEVICE_NAME_STEP2        0x00D1
+#define BLE_ASSIGN_DEVICE_NAME_STEP3        0x00D2
+#define BLE_ASSIGN_DEVICE_NAME_STEP4        0x00D3
+#define BLE_ASSIGN_DEVICE_NAME_STEP5        0x00D4
+#define BLE_ASSIGN_DEVICE_NAME_STEP6        0x00D5
+#define BLE_ASSIGN_DEVICE_NAME_STEP7        0x00D6
+#define BLE_SOFTWARE_RESET_FINAL_STEP1            0x00D7
+#define BLE_SOFTWARE_RESET_FINAL_STEP2            0x00D8
+#define BLE_WAIT_FOR_SOFTWARE_RESET_FINAL_STEP1   0x00D9
+#define BLE_FLUSH_RX_BUFFER   0x00DA
+
+#define BLE_SET_PWMODE_STEP1                      0x00DB
+#define BLE_SET_PWMODE_STEP2                      0x00DC
+#define BLE_SET_PWMODE_STEP3                      0x00DD
+#define BLE_SET_PWMODE_STEP4                      0x00DE
+#define BLE_LAST_STEP                             0x00DF
+
+#define broadcasting_ble_step_wait150ms             0x00E0
+#define broadcasting_ble_step_FLUSH_RX_BUFFER       0x00E1
+#define broadcasting_ble_step1                      0x00E2
+#define broadcasting_ble_step2                      0x00E3
+#define broadcasting_ble_step3                      0x00E4
+#define broadcasting_ble_step4                      0x00E5
+
+#define BLE_SOFTWARE_RESET_FIRST_STEP1          0x00E0
+#define BLE_SOFTWARE_RESET_FIRST_STEP2          0x00E1
+#define BLE_DISABLE_BROADCAST_STEP1             0x00E2
+#define BLE_DISABLE_BROADCAST_STEP2             0x00E3
+#define BLE_DISABLE_BROADCAST_STEP3             0x00E4
+#define BLE_DISABLE_BROADCAST_STEP4             0x00E5
+#define BLE_WAIT_FOR_SOFTWARE_RESET_FIRST_STEP1   0x00E6
+#define BLE_WAIT_FOR_SOFTWARE_RESET_FIRST_STEP2   0x00E7
+
+#define BLE_set_all_variables_in_one_packet_header        0x5152
+#define BLE_packet_recieved_ack_header                    0x2B31
+#define BLE_central_host_disconnected_header              0x2B2D
+#define BLE_central_host_connected_header                 0x2B2B
+
+#define send_packet_over_ble_header                             0x4142
+#define send_packet_over_ble_gather_data_step1                  0x00C0
+#define send_packet_over_ble_gather_data_step2                  0x00C1
+#define send_packet_over_ble_gather_crc16_step                  0x00D8
+#define send_packet_over_ble_point_to_1st_central_step          0x00C4
+#define send_packet_over_ble_send_4bytes_step1                  0x00C5
+#define send_packet_over_ble_send_4bytes_step2                  0x00C6
+#define send_packet_over_ble_send_4bytes_step3                  0x00C7
+#define send_packet_over_ble_send_4bytes_step4                  0x00C8
+#define send_packet_over_ble_send_4bytes_step5                  0x00C9
+#define send_packet_over_ble_send_4bytes_step6                  0x00CA
+#define send_packet_over_ble_send_4bytes_step7                  0x00CB
+#define send_packet_over_ble_send_4bytes_step8                  0x00CC
+#define send_packet_over_ble_bypass_step1                       0x00CF
+#define send_packet_over_ble_bypass_step2                       0x00D1
+
+#define read_packet_over_ble_step0                              0x0090
+#define read_packet_over_ble_step1                              0x0091
+#define read_packet_over_ble_step2                              0x0092
+#define read_packet_over_ble_step3                              0x0093
+
+#define roller_to_handle_mm               (311.0)
+#define roller_to_bar_mm                  (108.0)
+#define platform_to_roller_mm             (95.0)
+#define wt_centi_lb_default               (500)
+#define wt_centi_lb_max_limit             (11000)
+#define log_array_length                   (2000)
+//#define IqRef_A_max_limit                 (- 10.0 - (((wt_centi_lb_max_limit/100.0) - 21.45)/2.145)) // current that creates 110lbs of force pulling inwards on each motor
+#define IqRef_A_max_limit                 (-wt_centi_lb_max_limit/200.0)
+//#define IqRef_A_min_limit                 (- 10.0 - (((wt_centi_lb_default/100.0) - 21.45)/2.145)) // current that creates 5lbs of force pulling inwards on each motor
+#define IqRef_A_min_limit                 (-wt_centi_lb_default/200.0)
+
+#define threepointthreeVdiv4095            (3.3/4095.0)// 3.3v/4095 = 0.00080586
+#define loadcell_3_slope                    (4375.0/36.0)  // m in y=mx+c, where x = volts and y = pounds
+#define loadcell_3_intercept                (-27815.0/288.0)  // c in y=mx+c, where x = volts and y = pounds
+#define loadcell_4_slope                    (8750.0/71.0)  // m in y=mx+c, where x = volts and y = pounds
+#define loadcell_4_intercept                (-27225.0/284.0)  // c in y=mx+c, where x = volts and y = pounds
+#define loadcell_5_slope                    (35000.0/289.0)  // m in y=mx+c, where x = volts and y = pounds
+#define loadcell_5_intercept                (-24550.0/289.0)  // c in y=mx+c, where x = volts and y = pounds
+#define loadcell_6_slope                    (7000.0/57.0)  // m in y=mx+c, where x = volts and y = pounds
+#define loadcell_6_intercept                (-1637.0/19.0)  // c in y=mx+c, where x = volts and y = pounds
+
+// ble side is wheel side on Rev6 prototype
+#define loadcell_front_slope                loadcell_3_slope
+#define loadcell_front_intercept            loadcell_3_intercept
+#define loadcell_rear_slope                 loadcell_4_slope
+#define loadcell_rear_intercept             loadcell_4_intercept
+
+//// non ble side is non wheel side on Rev6 prototype
+//#define loadcell_front_slope                loadcell_5_slope
+//#define loadcell_front_intercept            loadcell_5_intercept
+//#define loadcell_rear_slope                 loadcell_6_slope
+//#define loadcell_rear_intercept             loadcell_6_intercept
+
+#define check_for_packet_received_over_serial_1_step0   0x00A0
+#define check_for_packet_received_over_serial_1_step1   0x00A1
+#define check_for_packet_received_over_serial_1_step2   0x00A2
+
+#define send_packet_over_serial_1_gather_data_send_header_step          0x00A0
+#define send_packet_over_serial_1_CRC_step                              0x00A2
+#define send_packet_over_serial_1_send_4th_variable_step2               0x00A7
+#define send_packet_over_serial_1_send_CRC16_step1                      0x00A8
+#define send_packet_over_serial_1_send_CRC16_step2                      0x00A9
+#define send_packet_over_serial_1_delay_step1                           0x00AA
+#define send_packet_over_serial_1_delay_step2                           0x00AB
+#define send_packet_over_serial_1_delay_step3                           0x00AC
+#define send_packet_type_0                                      0x00FB
+#define send_packet_type_1                                      0x00FC
+#define send_packet_type_2                                      0x00FD
+#define send_packet_type_3                                      0x00FE
+#define send_packet_type_4                                      0x00FF
+
+// **************************************************************************
+// the globals
+
+uint_least16_t gCounter_updateGlobals = 0;
+
+bool Flag_Latch_softwareUpdate = true;
+
+CTRL_Handle ctrlHandle;
+
+#ifdef CSM_ENABLE
+#pragma DATA_SECTION(halHandle,"rom_accessed_data");
+#endif
+HAL_Handle halHandle;
+
+#ifdef CSM_ENABLE
+#pragma DATA_SECTION(gUserParams,"rom_accessed_data");
+#endif
+USER_Params gUserParams;
+
+HAL_PwmData_t gPwmData = {_IQ(0.0), _IQ(0.0), _IQ(0.0)};
+
+HAL_AdcData_t gAdcData;
+
+_iq gMaxCurrentSlope = _IQ(0.0);
+
+#ifdef FAST_ROM_V1p6
+CTRL_Obj *controller_obj;
+#else
+#ifdef CSM_ENABLE
+#pragma DATA_SECTION(ctrl,"rom_accessed_data");
+#endif
+CTRL_Obj ctrl;				//v1p7 format
+#endif
+
+uint16_t gLEDcnt = 0;
+
+ENC_Handle encHandle;
+ENC_Obj enc;
+
+// define cpu_time object and handle for CPU usage time calculation
+CPU_TIME_Handle  cpu_timeHandle;
+CPU_TIME_Obj     cpu_time;
+uint32_t timer2Cnt = 0;
+
+volatile MOTOR_Vars_t gMotorVars = MOTOR_Vars_INIT;
+
+#ifdef FLASH
+// Used for running BackGround in flash, and ISR in RAM
+extern uint16_t *RamfuncsLoadStart, *RamfuncsLoadEnd, *RamfuncsRunStart;
+
+#ifdef CSM_ENABLE
+extern uint16_t *econst_start, *econst_end, *econst_ram_load;
+extern uint16_t *switch_start, *switch_end, *switch_ram_load;
+#endif
+#endif
+
+
+#ifdef DRV8301_SPI
+// Watch window interface to the 8301 SPI
+DRV_SPI_8301_Vars_t gDrvSpi8301Vars;
+#endif
+
+#ifdef DRV8305_SPI
+// Watch window interface to the 8305 SPI
+DRV_SPI_8305_Vars_t gDrvSpi8305Vars;
+#endif
+
+_iq gFlux_pu_to_Wb_sf;
+
+_iq gFlux_pu_to_VpHz_sf;
+
+_iq gTorque_Ls_Id_Iq_pu_to_Nm_sf;
+
+_iq gTorque_Flux_Iq_pu_to_Nm_sf;
+
+// **************************************************************************
+
+bool forceangle = false;
+_iq forced_elec_angle_pu = _IQ(0.0);
+
+bool run_sensored = true;
+bool allow_bar_stabilization = true;
+//bool run_sensored = false;
+
+uint32_t ball_position = 0;
+uint32_t ball_position_logged = 0;
+uint32_t ball_position_logged_prev = 0;
+int32_t ball_speed = 0;
+int32_t ball_speed_prev = 0;
+float ball_speed_ma = 0.0f;
+int32_t ball_accel = 0;
+int32_t ball_accel_prev = 0;
+int32_t ball_jerk = 0;
+float ball_position_mm = 0.0f;
+float handle_position_mm = 0.0f;
+float bar_position_mm = 0.0f;
+uint32_t start_force_position_from_other_motor = 0;
+uint16_t start_force_position_from_other_motor_recieved = 0;
+uint16_t ball_position_sent = 0;
+uint16_t start_force_position_sent = 0;
+int32_t ball_position_offset = 0;
+int32_t delta_ball_position = 0;
+bool tare_ball_position = false;
+bool ball_position_tared = false;
+bool tare_load_cells = false;
+bool load_cells_tared = false;
+bool tare_load_cells_2 = false;
+bool load_cells_tared_2 = false;
+
+uint32_t start_force_position = USER_MOTOR_START_COUNT;
+uint16_t person_height_feet = 0;
+uint16_t person_height_addn_inches = 0;
+float person_height_mm = 0.0f;
+float start_force_fraction_person_height = 0.81f; // unique to overhead press
+uint16_t start_force_position_mm = platform_to_roller_mm;
+uint16_t start_force_position_mm_used = 0;
+uint16_t start_force_position_from_other_motor_mm = platform_to_roller_mm;
+uint16_t start_force_position_from_other_motor_mm_used = 0;
+
+float concentric_overloading_factor = 1.0f;
+float concentric_overloading_factor_rate = 0.01f;
+float concentric_overloading_speed_setting = 0.05f;
+float bar_stabilization_factor = 1.0f;
+float bar_stabilization_factor_rate = 0.0005f;
+
+bool concentric_overloading_factor_enable = true;
+bool bar_stabilization_factor_enable = false;
+bool eccentric_overloading_factor_enable = false;
+
+bool force_enabled = false; // usually false;
+bool led10_on_status = false;
+bool gpio16_status = false;
+bool use_kill_switch_for_enable = false;
+bool sw_to_led_solenoid_test = false;
+uint32_t force_enable_delay = 0;
+uint32_t sw_to_led_solenoid_test_delay= 0;
+uint32_t button_counter = 5;
+uint32_t button1_delay_counter = 0;
+uint32_t button2_delay_counter = 0;
+uint32_t button_delay_counter_max = 2000; // was 3k for 15kz, made this 2k for 10kz
+bool button1_press_and_hold_detector = false;
+bool button2_press_and_hold_detector = false;
+
+uint16_t wt_centi_lb = wt_centi_lb_default;
+uint16_t wt_centi_lb_other_motor = wt_centi_lb_default;
+float wt_lb = 5.0f;
+float wt_lb_measured = 5.0f;
+uint16_t wt_centi_lb_measured = 500;
+uint16_t wt_centi_lb_measured_other_motor = 500;
+uint16_t MotorForce_Set_centi_lb_from_other_motor = 500;
+
+_iq IqRef_A_desired = _IQ(IqRef_A_min_limit);
+_iq IqRef_A_set = _IQ(IqRef_A_min_limit);
+
+_iq IqRef_pu_pos_max = _IQ(USER_MOTOR_MAX_CURRENT/USER_IQ_FULL_SCALE_CURRENT_A);
+_iq IqRef_pu_neg_max = -_IQ(USER_MOTOR_MAX_CURRENT/USER_IQ_FULL_SCALE_CURRENT_A);
+
+bool log_sample = false;
+_iq EncAngle_iq_log = _IQ(0.0);
+_iq BEMFAngle_iq_log = _IQ(0.0);
+float log_angle_speed_setting = 0.5f;
+
+bool master = false;
+uint16_t Status_motor = 0;
+
+//uint16_t packets_recieved[100];
+//uint32_t log_counter = 0;
+//bool flag1 = false;
+//bool flag2 = false;
+
+uint16_t send_packet_counter = 0;
+uint16_t packet_send[3] = {0, 0, 0};
+uint16_t packet_recieved[3] = {0, 0, 0};
+uint16_t packet_recieved_1[11] = {0,0,0,0,0,0,0,0,0,0,0};
+uint16_t packet_send_1[10] = {0,0,0,0,0,0,0,0,0,0};
+uint16_t tempArr[7] = {0,0,0,0,0,0,0};
+uint16_t CRCByte = 0;
+uint16_t CRC16bit_1 = 0;
+uint16_t CRC16bit_2 = 0;
+uint16_t checkCRCByte = 0;
+uint32_t ball_position_other_motor = 0;
+float ball_position_other_motor_mm = 0.0f;
+uint32_t ball_position_other_motor_recieved = 0;
+uint16_t Status_other_motor = 0 ;
+SCI_FifoStatus_e RxFifoStatusSCIB;
+SCI_FifoStatus_e RxFifoStatusSCIA;
+
+bool read_serial = false;
+bool send_serial = false;
+bool enable_serial_exchange = false;
+bool enable_serial_exchange_1 = true;
+
+uint16_t send_packet_over_serial_counter = 0;
+uint16_t send_packet_over_serial_1_counter = 1;
+uint16_t packet_send_counter = 0;
+uint16_t packet_send_counter_check=0;
+uint16_t packet_send_counter_check_prev = 0;
+uint16_t packet_send_counter_check_delta = 0;
+uint16_t packets_lost = 0;
+uint16_t send_packet_type_counter = send_packet_type_1;
+uint16_t test_counter = 0;
+uint16_t test_counter1 = 0;
+uint16_t test_counter2 = 0;
+uint16_t test_counter3 = 0;
+uint16_t test_counter4 = 0;
+uint16_t test_counter5 = 0;
+uint16_t test_counter6 = 0;
+uint16_t test_counter7 = 0;
+uint16_t test_counter8 = 0;
+uint16_t test_counter9 = 0;
+uint16_t test_counter10 = 0;
+
+uint64_t test_enable_serial_exchanged_called = 0;
+uint16_t test_no_bytes_in_Rx_buffer = 0;
+uint16_t test_1_byte_in_Rx_buffer = 0;
+uint16_t test_2_bytes_in_Rx_buffer = 0;
+uint16_t test_3_bytes_in_Rx_buffer = 0;
+uint16_t test_4_bytes_in_Rx_buffer = 0;
+uint64_t packet_sent = 0;
+//uint16_t valid_position_packet = 0;
+//uint16_t valid_status_packet = 0;
+//uint16_t valid_ForceSensor1_packet = 0;
+//uint16_t valid_ForceSensor2_packet = 0;
+//uint16_t valid_MotorForce_packet = 0;
+//uint16_t valid_MotorForce_setting_packet = 0;
+//uint16_t valid_startsForcePos_setting_packet = 0;
+//uint16_t valid_packet_received_sum_mismatch_counter = 0;
+
+uint32_t ble_packets_sent_sucessfully = 0;
+
+_iq Loadcell_front_iq = _IQ(0.0);
+_iq Loadcell_rear_iq  = _IQ(0.0);
+
+uint16_t dc_bus_current_bits = 0;
+float dc_bus_current_inV = 0.0f;
+float dc_bus_current_inA = 0.0f;
+float dcbus_current_sensor_gain = 10.0f; // for TI # TMCS1101A2BQDRQ1
+//float dcbus_current_sensor_gain = 15.151515f; // for Allegro # ACS725LLCTR-20AB-T
+float dcbus_current_sensor_offset = 1.644f;
+uint16_t Thermistor_reading_bits = 0;
+float Thermistor_deg_C = 0.0f;
+
+//uint16_t loadcell_diff_window = 400; // 400 for Rev6
+//float min_balance_fraction = 0.2f; // 0.2 for Rev6
+uint16_t loadcell_diff_window = 800; // 800 for old POC
+float min_balance_fraction = 0.3f; // 0.3 for old POC
+
+uint16_t loadcell_front = 0;
+uint16_t loadcell_rear  = 0;
+uint16_t battery_thermistor = 0;
+uint16_t motor_thermistor = 0;
+float loadcell_front_inV = 0.0f;
+float loadcell_rear_inV  = 0.0f;
+float loadcell_front_inlb = 0.0f;
+float loadcell_rear_inlb  = 0.0f;
+float loadcell_front_offset_inlb = 0.0f;
+float loadcell_rear_offset_inlb = 0.0f;
+float loadcell_front_inlb_tared = 0.0f;
+float loadcell_rear_inlb_tared  = 0.0f;
+float loadcell_tared_sum = 0.0f;
+uint16_t loadcell_front_offset = 0;
+uint16_t loadcell_rear_offset  = 0;
+uint16_t loadcell_front_tared = 0;
+uint16_t loadcell_rear_tared  = 0;
+uint16_t loadcell_front_other_motor = 0;
+uint16_t loadcell_rear_other_motor  = 0;
+
+float delta_fraction_front_rear = 0.0;
+float delta_fraction_front_rear_other_motor = 0.0;
+float delta_fraction_left_right_front = 0.0;
+float delta_fraction_left_right_rear = 0.0;
+
+
+bool platform_force_balanced = false;
+bool front_rear_balanced =  false;
+bool front_rear_other_motor_balanced = false;
+bool left_right_front_balanced = false;
+bool left_right_rear_balanced = false;
+bool check_platform_force_balance = false;
+uint32_t platform_force_balanced_counter = 0;
+
+bool force_flag = false;
+
+bool start_intialize_ble = false;
+bool ble_intilization_done = false;
+uint16_t intialize_ble_step = BLE_WAKEUP_STEP;
+uint32_t ble_delay_counter = 0;
+uint16_t ble_response_array[32] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+uint16_t ble_response_array_counter = 0;
+uint16_t ble_recieve_packet_array[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+uint16_t ble_recieve_packet_array_counter = 0;
+uint16_t ble_packet_recieved = 0;
+bool ble_module_MACaddr_responds = false;
+bool ble_broadcast_name_set = false;
+bool ble_device_name_set = false;
+bool ble_pwmode_set = false;
+bool BLE_SET_PWMODE_STEP4_got_more_than_1_byte = false;
+bool ble_broadcast_disabled_during_init = false;
+bool enable_ble_send_data = false;
+bool clear_to_send_ble_data = false;
+uint16_t ble_packet_sent_counter = 0;
+uint16_t ble_packet_sent_success_counter = 0;
+uint16_t ble_packets_lost = 0;
+bool ble_broadcast_name_matched = false;
+bool ble_broadcast_name_returned = false;
+bool flag_count_acks = false;
+bool enable_ble_recieve_data = false;
+bool matched_packet = false;
+bool ble_broadcasting = true;
+bool broadcasting_response_recieved = false;
+bool call_send_command_to_ble_to_change_broadcasting = false;
+uint16_t broadcasting_ble_steps = broadcasting_ble_step_wait150ms;
+
+
+uint16_t crc16_send_packet = 0xFFFF;
+uint16_t crc16_recieve_packet = 0xFFFF;
+uint16_t crc16_check = 0;
+uint16_t status_flags = 0;
+uint16_t status_flags_input_over_ble_left = 0;
+uint16_t status_flags_input_over_ble_right = 0;
+uint16_t position_left = 0;
+uint16_t position_right = 0;
+uint16_t start_force_position_setting_left = platform_to_roller_mm;
+uint16_t start_force_position_setting_right = platform_to_roller_mm;
+uint16_t start_force_position_setting_input_over_ble = 0;
+uint16_t force_left_centiLbs = 0;
+uint16_t nominal_force_setting_left_centiLbs = 0;
+uint16_t nominal_force_setting_input_over_ble_left_centiLbs = wt_centi_lb_default;
+uint16_t force_right_centiLbs = 0;
+uint16_t nominal_force_setting_right_centiLbs = 0;
+uint16_t nominal_force_setting_input_over_ble_right_centiLbs = wt_centi_lb_default;
+
+uint16_t send_packet_over_ble_steps = send_packet_over_ble_gather_data_step1;
+uint16_t read_packet_over_ble_steps = read_packet_over_ble_step0;
+bool send_packet_over_ble_paused = false;
+
+uint32_t update_counter = 1;
+uint16_t ack_counter = 0;
+uint16_t name_match_counter = 0;
+uint16_t byte_read = 0;
+uint16_t byte_read_prev = 0;
+uint16_t counter_send_ble_packet = 0;
+uint16_t counter_send_ble_packet_max = 250; //  300 for 10khz = 33.33hz (30ms)
+
+uint16_t ms_counter = 0;
+uint16_t sec_counter = 0;
+uint32_t timestamp = 0;
+uint16_t timestamp_sec = 0;
+bool automate_startup = true;
+bool startup_process_done = false;
+uint16_t tare_counter = 0;
+bool read_from_manual_or_ble_but_not_from_other_motor = true;
+bool input_manual_not_from_ble = true;
+bool start_ble_data_exchange = false;
+float start_force_turn = USER_MOTOR_START_TURN;
+float start_force_turn_other_motor = USER_MOTOR_START_TURN;
+uint16_t battery_voltage_centiV = 0;
+float battery_voltage_V = 0.0f;
+float Battery_Power_W = 0.0f;
+_iq iq_var_A_display = _IQ(0.0);
+
+//float log_dc_bus_current_A[log_array_length];
+//float log_dc_bus_voltage_V[log_array_length];
+//float log_ball_position_mm[log_array_length];
+float log_ball_position[log_array_length];
+float log_ball_speed[log_array_length];
+float log_ball_accel[log_array_length];
+//float log_ball_jerk[log_array_length];
+float log_wt_lb_measured[log_array_length];
+float log_motor_speed_krpm[log_array_length];
+//float log_motor_Vq[log_array_length];
+
+uint32_t log_array_pos = 0;
+uint16_t log_counter = 1;
+bool log_array = false;
+bool log_array_start = false;
+bool log_init = true;
+
+bool ble_central_host_connected = false;
+
+bool solenoid_break_released = true; // solenoid is on, brake released
+bool led_display_enabled = false;
+bool button_enabled = false;
+bool led_display_setup_notdone = true;
+bool drv8301_setup_notdone = false;
+bool led_display_step1 = true;
+bool led_display_step2 = false;
+bool led_display_step3 = false;
+uint16_t led_display_data1 = 0xFF00;
+uint16_t led_display_data2 = 0x0000;
+
+bool locked_led_segment_bit = false;
+bool lb_led_segment_bit = false;
+bool in_led_segment_bit = false;
+bool platform_switch_led_top_bit = false;
+bool platform_switch_led_middle_bit = false;
+bool platform_switch_led_bottom_bit = false;
+bool button1_led_bit = false;
+bool button2_led_bit = false;
+
+bool left_digit_top_led_bit = false;
+bool left_digit_bottom_led_bit = false;
+
+bool middle_digit_top_left_led_bit = false;
+bool middle_digit_bottom_left_led_bit = false;
+bool middle_digit_bottom_led_bit = false;
+bool middle_digit_middle_led_bit = false;
+bool middle_digit_top_led_bit = false;
+bool middle_digit_top_right_led_bit = false;
+bool middle_digit_bottom_right_led_bit = false;
+
+bool right_digit_top_left_led_bit = false;
+bool right_digit_bottom_left_led_bit = false;
+bool right_digit_bottom_led_bit = false;
+bool right_digit_middle_led_bit = false;
+bool right_digit_top_led_bit = false;
+bool right_digit_top_right_led_bit = false;
+bool right_digit_bottom_right_led_bit = false;
+
+uint16_t three_digit_led_number = 188;
+bool left_digit_led_number = true;
+uint16_t middle_digit_led_number = 8;
+uint16_t right_digit_led_number = 8;
+float temp1 = 0.0f;
+float temp2 = 0.0f;
+uint16_t varr1 = 0;
+uint16_t varr2 = 0;
+
+bool check_ISR_time_overflow = true;
+bool ISR_time_overflow_happened = false;
+uint32_t check_ISR_time_overflow_counter = 0;
+uint16_t check_for_packet_received_over_serial_1_steps = check_for_packet_received_over_serial_1_step0;
+uint16_t send_packet_over_serial_1_steps = send_packet_over_serial_1_gather_data_send_header_step;
+
+bool bypass_updateGlobalVariables = false;
+
+//bool state_gpo_31_CANTX = false;
+//bool state_gpi_30_CANRX = false;
+//bool state_gpo_16_SPI_SIMO = false;
+//bool state_gpo_18_SPI_CLK = false;
+//bool state_gpo_19_SPI_STE = false;
+//bool state_gpi_17_SPI_SOMI = false;
+bool relay_switch_enabled = true;
+bool state_gpo_40_relay_switch = false;
+uint16_t relay_switch_counter = 0;
+
+// the functions
+
+uint16_t getCRCArray(uint16_t message[], uint16_t length)
+{
+    uint16_t i, j, crc = 0;
+
+    for (i = 0; i < length; i++)
+    {
+        crc ^= message[i];
+        for (j = 0; j < 8; j++)
+        {
+            if (crc & 1)
+            crc ^= 0x0091;
+            crc >>= 1;
+        }
+    }
+    crc = crc & 0x00FF;
+    return crc;
+} // end of getCRCArray() function
+
+//uint16_t getCRC16_of_array(uint16_t array[], uint16_t length) // array[] elements are byte sized 0x00XX
+//{
+//    uint16_t crc16 = 0xffff;
+//    uint16_t i, j;
+//    for (i = 0; i < length; i++)
+//    {
+//        crc16 = (crc16 ^ array[i]) << 8;
+//        for (j = 0; j < 8; ++j)
+//        {
+//            if (crc16 & 0x8000)
+//                crc16 = (crc16 << 1) ^ 0x8005;
+//            else
+//                crc16 = crc16 << 1;
+//        }
+//    }
+//    return crc16;
+//}// end of getCRC16_of_array() function
+
+uint16_t getCRC16(uint16_t byte, uint16_t crc16_init) // input elements is byte sized ie 0x00XX , crc16_init = 0xFFFF for first byte of array
+{
+    uint16_t j;
+    crc16_init = (crc16_init ^ byte) << 8;
+    for (j = 0; j < 8; ++j)
+    {
+        if (crc16_init & 0x8000)
+            crc16_init = (crc16_init << 1) ^ 0x8005;
+        else
+            crc16_init = crc16_init << 1;
+    }
+
+    return crc16_init;
+}// end of getCRC16() function
+
+
+uint16_t getCRC16_of_array14_step1(uint16_t array[], uint16_t crc16) // array[] elements are byte sized 0x00XX
+{
+    uint16_t i, j;
+    for (i = 0; i < 3; i++)
+    {
+        crc16 = (crc16 ^ array[i]) << 8;
+        for (j = 0; j < 8; ++j)
+        {
+            if (crc16 & 0x8000)
+                crc16 = (crc16 << 1) ^ 0x8005;
+            else
+                crc16 = crc16 << 1;
+        }
+    }
+    return crc16;
+}// end of getCRC16_of_array14_step1() function
+
+
+uint16_t getCRC16_of_array14_step2(uint16_t array[], uint16_t crc16) // array[] elements are byte sized 0x00XX
+{
+    uint16_t i, j;
+    for (i = 3; i < 9; i++)
+    {
+        crc16 = (crc16 ^ array[i]) << 8;
+        for (j = 0; j < 8; ++j)
+        {
+            if (crc16 & 0x8000)
+                crc16 = (crc16 << 1) ^ 0x8005;
+            else
+                crc16 = crc16 << 1;
+        }
+    }
+    return crc16;
+}// end of getCRC16_of_array14_step2() function
+
+
+uint16_t getCRC16_of_array14_step3(uint16_t array[], uint16_t crc16) // array[] elements are byte sized 0x00XX
+{
+    uint16_t i, j;
+    for (i = 9; i < 14; i++)
+    {
+        crc16 = (crc16 ^ array[i]) << 8;
+        for (j = 0; j < 8; ++j)
+        {
+            if (crc16 & 0x8000)
+                crc16 = (crc16 << 1) ^ 0x8005;
+            else
+                crc16 = crc16 << 1;
+        }
+    }
+    return crc16;
+}// end of getCRC16_of_array14_step3() function
+
+void send_packet_over_serial_1(HAL_Handle handle)
+{
+    switch(send_packet_over_serial_1_steps)
+    {
+    case send_packet_over_serial_1_gather_data_send_header_step :
+        if(HAL_getTxFifoStatusSCIB(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIBFIFO(handle,send_packet_type_counter);
+            packet_send_1[0] = send_packet_type_counter;
+            packet_send_1[1] = (Status_motor & 0x00FF) ;
+            ball_position_sent = ball_position >> 1;
+            packet_send_1[2] = (ball_position_sent >> 8) & 0x00FF;
+            packet_send_1[3] = (ball_position_sent) & 0x00FF ; // we are loosing 1 bit. it would be good to squeeze that bit as MSB of wt_centi_lb_measured
+            packet_send_1[4] = (wt_centi_lb_measured >> 8) & 0x00FF;
+            packet_send_1[5] = wt_centi_lb_measured & 0x00FF ;
+            switch(send_packet_type_counter)
+            {
+            case send_packet_type_1 :
+                packet_send_1[6] = (loadcell_front_tared >> 8) & 0x00FF;
+                packet_send_1[7] = loadcell_front_tared & 0x00FF ;
+                break;
+            case send_packet_type_2 :
+                packet_send_1[6] = (loadcell_rear_tared >> 8) & 0x00FF;
+                packet_send_1[7] = loadcell_rear_tared & 0x00FF ;
+                break;
+            case send_packet_type_3 :
+                if(read_from_manual_or_ble_but_not_from_other_motor)
+                {
+                    packet_send_1[6] = (wt_centi_lb_other_motor >> 8) & 0x00FF;
+                    packet_send_1[7] = wt_centi_lb_other_motor & 0x00FF ;
+                }
+                else
+                {
+                    packet_send_1[6] = (wt_centi_lb >> 8) & 0x00FF ;
+                    packet_send_1[7] = wt_centi_lb & 0x00FF ;
+                }
+                break;
+            case send_packet_type_4 :
+                packet_send_1[6] = (start_force_position_sent >> 8) & 0x00FF ;
+                packet_send_1[7] = (start_force_position_sent) & 0x00FF ;
+                break;
+            default :
+                break;
+           }
+//            packet_send_1[6] = (packet_send_counter >> 8) & 0x00FF;
+//            packet_send_1[7] = (packet_send_counter) & 0x00FF ;
+//            packet_send_counter++;
+            CRC16bit_2 = getCRC16(packet_send_1[0],0xFFFF);
+            send_packet_over_serial_1_counter = 1;
+            send_packet_over_serial_1_steps = send_packet_over_serial_1_CRC_step;
+        }
+        else
+        {
+            test_counter++;
+        }
+        break;
+     case send_packet_over_serial_1_CRC_step :
+         if(HAL_getTxFifoStatusSCIB(handle) == SCI_FifoStatus_Empty)
+         {
+             HAL_writeSCIBFIFO(handle,packet_send_1[send_packet_over_serial_1_counter]);
+             CRC16bit_2 = getCRC16(packet_send_1[send_packet_over_serial_1_counter],CRC16bit_2);
+             if(send_packet_over_serial_1_counter == 6)
+             {
+                 send_packet_over_serial_1_steps = send_packet_over_serial_1_send_4th_variable_step2;
+             }
+             else
+             {
+                 send_packet_over_serial_1_counter++;
+             }
+         }
+         else
+         {
+             test_counter++;
+         }
+         break;
+     case send_packet_over_serial_1_send_4th_variable_step2 :
+         if(HAL_getTxFifoStatusSCIB(handle) == SCI_FifoStatus_Empty)
+         {
+             HAL_writeSCIBFIFO(handle,packet_send_1[7]);
+             CRC16bit_2 = getCRC16(packet_send_1[7],CRC16bit_2);
+             packet_send_1[8] = (CRC16bit_2 >> 8) & 0x00FF;
+             send_packet_over_serial_1_steps = send_packet_over_serial_1_send_CRC16_step1;
+         }
+         else
+         {
+             test_counter++;
+         }
+         break;
+     case send_packet_over_serial_1_send_CRC16_step1 :
+         if(HAL_getTxFifoStatusSCIB(handle) == SCI_FifoStatus_Empty)
+         {
+             HAL_writeSCIBFIFO(handle,packet_send_1[8]);
+             packet_send_1[9] = CRC16bit_2 & 0x00FF ;
+             send_packet_over_serial_1_steps = send_packet_over_serial_1_send_CRC16_step2;
+         }
+         else
+         {
+             test_counter++;
+         }
+         break;
+     case send_packet_over_serial_1_send_CRC16_step2 :
+         if(HAL_getTxFifoStatusSCIB(handle) == SCI_FifoStatus_Empty)
+         {
+             HAL_writeSCIBFIFO(handle,packet_send_1[9]);
+             send_packet_over_serial_1_steps = send_packet_over_serial_1_delay_step1;
+         }
+         else
+         {
+             test_counter++;
+         }
+         break;
+     case send_packet_over_serial_1_delay_step1 :
+         if (send_packet_type_counter == send_packet_type_4)
+         {
+             send_packet_type_counter = send_packet_type_1;
+         }
+         else
+         {
+             send_packet_type_counter++;
+         }
+         send_packet_over_serial_1_steps = send_packet_over_serial_1_delay_step2;
+         break;
+     case send_packet_over_serial_1_delay_step2 :
+         send_packet_over_serial_1_steps = send_packet_over_serial_1_delay_step3;
+         break;
+     case send_packet_over_serial_1_delay_step3 :
+         send_packet_over_serial_1_steps = send_packet_over_serial_1_gather_data_send_header_step;
+         break;
+     default :
+         break;
+    }
+    return;
+}   // end of send_packet_over_serial_1() function
+
+void send_packet_over_serial(HAL_Handle handle)
+{
+    if(send_packet_over_serial_counter == 5) // makes the send rate to 1.5khz for ISR rate set at 15khz. data rate for each of the 5 packets becomes 300Hz.
+        // left it as is for 10khz, does this same 5 become 1khz rate for 10khz ISR? data rate becomes 200hz?
+    {
+        send_packet_over_serial_counter = 0;
+        if (HAL_getTxFifoStatusSCIB(handle) == SCI_FifoStatus_Empty)
+        {
+            switch(send_packet_counter)
+            {
+            case 0 :
+                packet_send[0] = Position_Packet_Header;
+                ball_position_sent = ball_position >> 1;
+                packet_send[1] = (ball_position_sent >> 8) & 0x00FF ;
+                packet_send[2] = (ball_position_sent) & 0x00FF ;
+                break;
+            case 1 :
+                packet_send[0] = Status_Packet_Header;
+                packet_send[1] = (Status_motor >> 8) & 0x00FF ;
+                packet_send[2] = Status_motor & 0x00FF ;
+                break;
+            case 2 :
+                packet_send[0] = ForceSensor1_Header;
+                packet_send[1] = (loadcell_front_tared >> 8) & 0x00FF ;
+                packet_send[2] = loadcell_front_tared & 0x00FF ;
+                break;
+            case 3 :
+                packet_send[0] = ForceSensor2_Header;
+                packet_send[1] = (loadcell_rear_tared >> 8) & 0x00FF ;
+                packet_send[2] = loadcell_rear_tared & 0x00FF ;
+                break;
+            case 4 :
+                packet_send[0] = MotorForce_Measured_Header;
+                packet_send[1] = (wt_centi_lb_measured >> 8) & 0x00FF ;
+                packet_send[2] = wt_centi_lb_measured & 0x00FF ;
+                break;
+            case 5 :
+                packet_send[0] = MotorForce_Setting_Header;
+                if(read_from_manual_or_ble_but_not_from_other_motor)
+                {
+                    packet_send[1] = (wt_centi_lb_other_motor >> 8) & 0x00FF ;
+                    packet_send[2] = wt_centi_lb_other_motor & 0x00FF ;
+                }
+                else
+                {
+                    packet_send[1] = (wt_centi_lb >> 8) & 0x00FF ;
+                    packet_send[2] = wt_centi_lb & 0x00FF ;
+                }
+                break;
+            case 6 :
+                packet_send[0] = start_force_position_Setting_Header;
+                packet_send[1] = (start_force_position_sent >> 8) & 0x00FF ;
+                packet_send[2] = (start_force_position_sent) & 0x00FF ;
+                break;
+            default :
+                break;
+            }
+
+            CRCByte = getCRCArray(packet_send,3);
+            HAL_writeSCIBFIFO(handle,packet_send[0]);
+            HAL_writeSCIBFIFO(handle,packet_send[1]);
+            HAL_writeSCIBFIFO(handle,packet_send[2]);
+            HAL_writeSCIBFIFO(handle,CRCByte);
+
+            if(send_packet_counter == 6)
+            {
+                send_packet_counter = 0;
+            }
+            else
+            {
+                send_packet_counter++;
+            }
+        }
+    }
+    else
+    {
+        send_packet_over_serial_counter++;
+    }
+    return;
+}   // end of send_packet_over_serial() function
+
+bool isValidHeader(uint16_t header)
+{
+    bool flag = true;
+    switch(header)
+    {
+    case Position_Packet_Header :
+        break;
+    case Status_Packet_Header :
+        break;
+    case ForceSensor1_Header :
+        break;
+    case ForceSensor2_Header :
+        break;
+    case MotorForce_Measured_Header :
+        break;
+    case MotorForce_Setting_Header :
+        break;
+    case start_force_position_Setting_Header :
+        break;
+    default:
+        flag = false;
+        break;
+    }
+    return flag;
+} // end of isValidHeader() function
+
+void read_valid_packet(uint16_t packet[])
+{
+    switch(packet[0])
+    {
+        case Position_Packet_Header :
+            ball_position_other_motor_recieved = (packet[1] << 8) + packet[2];
+            ball_position_other_motor = ball_position_other_motor_recieved << 1;
+            //valid_position_packet++;
+            break;
+        case Status_Packet_Header :
+            Status_other_motor = (packet[1]<<8) + packet[2]; // packet[1] is all zeros anyways
+            if(!read_from_manual_or_ble_but_not_from_other_motor)
+            {
+                bar_stabilization_factor_enable = ((Status_other_motor & 0b0000000000000100) >> 2);
+                check_platform_force_balance = ((Status_other_motor & 0b0000000000001000) >> 3);
+            }
+            //valid_status_packet++;
+            break;
+        case ForceSensor1_Header :
+            loadcell_front_other_motor = (packet[1]<<8) + packet[2];
+            //valid_ForceSensor1_packet++;
+            break;
+        case ForceSensor2_Header :
+            loadcell_rear_other_motor = (packet[1]<<8) + packet[2];
+            //valid_ForceSensor2_packet++;
+            break;
+        case MotorForce_Measured_Header :
+            wt_centi_lb_measured_other_motor = (packet[1]<<8) + packet[2];
+            //valid_MotorForce_packet++;
+            break;
+        case MotorForce_Setting_Header :
+            MotorForce_Set_centi_lb_from_other_motor = (packet[1]<<8) + packet[2];
+            if(!read_from_manual_or_ble_but_not_from_other_motor)
+            {
+                wt_centi_lb = MotorForce_Set_centi_lb_from_other_motor;
+            }
+            //valid_MotorForce_setting_packet++;
+            break;
+        case start_force_position_Setting_Header :
+            start_force_position_from_other_motor_recieved = (packet[1]<<8) + packet[2];
+            if(!read_from_manual_or_ble_but_not_from_other_motor)
+            {
+                start_force_position = (start_force_position_from_other_motor_recieved << 1);
+            }
+            //valid_startsForcePos_setting_packet++;
+            break;
+        default:
+            break;
+    }
+    return ;
+}   // end of read_valid_packet() function
+
+void check_for_packet_received_over_serial_1(HAL_Handle handle)
+{
+    RxFifoStatusSCIB = HAL_getRxFifoStatusSCIB(handle);
+    switch(RxFifoStatusSCIB)
+    {
+        case SCI_FifoStatus_Empty : // no bytes in the RX FIFO
+            test_no_bytes_in_Rx_buffer++;
+            if(check_for_packet_received_over_serial_1_steps == check_for_packet_received_over_serial_1_step1)
+            {
+                CRC16bit_1 = getCRC16(packet_recieved_1[5],CRC16bit_1);
+                CRC16bit_1 = getCRC16(packet_recieved_1[6],CRC16bit_1);
+                CRC16bit_1 = getCRC16(packet_recieved_1[7],CRC16bit_1);
+                if(CRC16bit_1 == ((packet_recieved_1[8] <<8) + packet_recieved_1[9]))
+                {
+                    Status_other_motor = packet_recieved_1[1];
+                    if(!read_from_manual_or_ble_but_not_from_other_motor)
+                    {
+                        bar_stabilization_factor_enable = ((Status_other_motor & 0b0000000000000100) >> 2);
+                        check_platform_force_balance = ((Status_other_motor & 0b0000000000001000) >> 3);
+                    }
+                    ball_position_other_motor_recieved = (packet_recieved_1[2] << 8) + packet_recieved_1[3];
+                    ball_position_other_motor = ball_position_other_motor_recieved << 1;
+                    wt_centi_lb_measured_other_motor = (packet_recieved_1[4] << 8) + packet_recieved_1[5];
+                    switch(packet_recieved_1[0])
+                    {
+                        case send_packet_type_1 :
+                            loadcell_front_other_motor = (packet_recieved_1[6] << 8) + packet_recieved_1[7];
+                            break;
+                        case send_packet_type_2 :
+                            loadcell_rear_other_motor = (packet_recieved_1[6] << 8) + packet_recieved_1[7];
+                            break;
+                        case send_packet_type_3 :
+                            MotorForce_Set_centi_lb_from_other_motor = (packet_recieved_1[6] << 8) + packet_recieved_1[7];
+                            if(!read_from_manual_or_ble_but_not_from_other_motor)
+                            {
+                                wt_centi_lb = MotorForce_Set_centi_lb_from_other_motor;
+                            }
+                            break;
+                        case send_packet_type_4 :
+                            start_force_position_from_other_motor_recieved = (packet_recieved_1[6] << 8) + packet_recieved_1[7]; // comment : should be sent out over ble, not being used
+                            if(!read_from_manual_or_ble_but_not_from_other_motor)
+                            {
+                                start_force_position = (start_force_position_from_other_motor_recieved << 1);
+                            }
+                            break;
+                        default :
+                            break;
+                    }
+//                    packet_send_counter_check_prev = packet_send_counter_check;
+//                    packet_send_counter_check = (packet_recieved_1[6] << 8) + packet_recieved_1[7];
+//                    packet_send_counter_check_delta = packet_send_counter_check - packet_send_counter_check_prev;
+//                    if(packet_send_counter_check_delta > 1)
+//                    {
+//                        packets_lost = packets_lost + (packet_send_counter_check_delta - 1);
+//                    }
+                    packet_recieved_1[0] = 0x0000;
+                    packet_recieved_1[1] = 0x0000;
+                    packet_recieved_1[2] = 0x0000;
+                    packet_recieved_1[3] = 0x0000;
+                    packet_recieved_1[4] = 0x0000;
+                    packet_recieved_1[5] = 0x0000;
+                    packet_recieved_1[6] = 0x0000;
+                    packet_recieved_1[7] = 0x0000;
+                    packet_recieved_1[8] = 0x0000;
+                    packet_recieved_1[9] = 0x0000;
+                    test_counter1++;
+                }
+                else
+                {
+                    test_counter2++;
+                    packet_recieved_1[0] = packet_recieved_1[1];
+                    packet_recieved_1[1] = packet_recieved_1[2];
+                    packet_recieved_1[2] = packet_recieved_1[3];
+                    packet_recieved_1[3] = packet_recieved_1[4];
+                    packet_recieved_1[4] = packet_recieved_1[5];
+                    packet_recieved_1[5] = packet_recieved_1[6];
+                    packet_recieved_1[6] = packet_recieved_1[7];
+                    packet_recieved_1[7] = packet_recieved_1[8];
+                    packet_recieved_1[8] = packet_recieved_1[9];
+                }
+                check_for_packet_received_over_serial_1_steps = check_for_packet_received_over_serial_1_step0;
+            }
+            if(check_for_packet_received_over_serial_1_steps == check_for_packet_received_over_serial_1_step2)
+            {
+                CRC16bit_1 = getCRC16(packet_recieved_1[6],CRC16bit_1);
+                CRC16bit_1 = getCRC16(packet_recieved_1[7],CRC16bit_1);
+                CRC16bit_1 = getCRC16(packet_recieved_1[8],CRC16bit_1);
+                if(CRC16bit_1 == ((packet_recieved_1[9] <<8) + packet_recieved_1[10]))
+                {
+                    Status_other_motor = packet_recieved_1[2];
+                    if(!read_from_manual_or_ble_but_not_from_other_motor)
+                    {
+                        bar_stabilization_factor_enable = ((Status_other_motor & 0b0000000000000100) >> 2);
+                        check_platform_force_balance = ((Status_other_motor & 0b0000000000001000) >> 3);
+                    }
+                    ball_position_other_motor_recieved = (packet_recieved_1[3] << 8) + packet_recieved_1[4];
+                    ball_position_other_motor = ball_position_other_motor_recieved << 1;
+                    wt_centi_lb_measured_other_motor = (packet_recieved_1[5] << 8) + packet_recieved_1[6];
+                    switch(packet_recieved_1[1])
+                    {
+                        case send_packet_type_1 :
+                            loadcell_front_other_motor = (packet_recieved_1[7] << 8) + packet_recieved_1[8];
+                            break;
+                        case send_packet_type_2 :
+                            loadcell_rear_other_motor = (packet_recieved_1[7] << 8) + packet_recieved_1[8];
+                            break;
+                        case send_packet_type_3 :
+                            MotorForce_Set_centi_lb_from_other_motor = (packet_recieved_1[7] << 8) + packet_recieved_1[8];
+                            if(!read_from_manual_or_ble_but_not_from_other_motor)
+                            {
+                                wt_centi_lb = MotorForce_Set_centi_lb_from_other_motor;
+                            }
+                            break;
+                        case send_packet_type_4 :
+                            start_force_position_from_other_motor_recieved = (packet_recieved_1[7] << 8) + packet_recieved_1[8];
+                            if(!read_from_manual_or_ble_but_not_from_other_motor)
+                            {
+                                start_force_position = (start_force_position_from_other_motor_recieved << 1);
+                            }
+                            break;
+                        default :
+                            break;
+                    }
+//                    packet_send_counter_check_prev = packet_send_counter_check;
+//                    packet_send_counter_check = (packet_recieved_1[7] << 8) + packet_recieved_1[8];
+//                    packet_send_counter_check_delta = packet_send_counter_check - packet_send_counter_check_prev;
+//                    if(packet_send_counter_check_delta > 1)
+//                    {
+//                        packets_lost = packets_lost + (packet_send_counter_check_delta - 1);
+//                    }
+                    packet_recieved_1[0] = 0x0000;
+                    packet_recieved_1[1] = 0x0000;
+                    packet_recieved_1[2] = 0x0000;
+                    packet_recieved_1[3] = 0x0000;
+                    packet_recieved_1[4] = 0x0000;
+                    packet_recieved_1[5] = 0x0000;
+                    packet_recieved_1[6] = 0x0000;
+                    packet_recieved_1[7] = 0x0000;
+                    packet_recieved_1[8] = 0x0000;
+                    packet_recieved_1[9] = 0x0000;
+                    packet_recieved_1[10] = 0x0000;
+                    test_counter3++;
+                }
+                else
+                {
+                    test_counter4++;
+                    packet_recieved_1[0] = packet_recieved_1[2];
+                    packet_recieved_1[1] = packet_recieved_1[3];
+                    packet_recieved_1[2] = packet_recieved_1[4];
+                    packet_recieved_1[3] = packet_recieved_1[5];
+                    packet_recieved_1[4] = packet_recieved_1[6];
+                    packet_recieved_1[5] = packet_recieved_1[7];
+                    packet_recieved_1[6] = packet_recieved_1[8];
+                    packet_recieved_1[7] = packet_recieved_1[9];
+                    packet_recieved_1[8] = packet_recieved_1[10];
+                }
+                check_for_packet_received_over_serial_1_steps = check_for_packet_received_over_serial_1_step0;
+            }
+            break;
+        case SCI_FifoStatus_1_Word : // extract that 1 byte in the RX FIFO
+            test_1_byte_in_Rx_buffer++;
+            packet_recieved_1[9] = (HAL_readSCIBFIFO(handle) & 0x00FF);
+            if (packet_recieved_1[0] > send_packet_type_0) // matched packet type header
+            {
+                CRC16bit_1 = getCRC16(packet_recieved_1[0],0xFFFF);
+                CRC16bit_1 = getCRC16(packet_recieved_1[1],CRC16bit_1);
+                CRC16bit_1 = getCRC16(packet_recieved_1[2],CRC16bit_1);
+                CRC16bit_1 = getCRC16(packet_recieved_1[3],CRC16bit_1);
+                CRC16bit_1 = getCRC16(packet_recieved_1[4],CRC16bit_1);
+                check_for_packet_received_over_serial_1_steps = check_for_packet_received_over_serial_1_step1;
+                test_counter5++;
+            }
+            else
+            {
+                test_counter6++;
+                check_for_packet_received_over_serial_1_steps = check_for_packet_received_over_serial_1_step0;
+                packet_recieved_1[0] = packet_recieved_1[1];
+                packet_recieved_1[1] = packet_recieved_1[2];
+                packet_recieved_1[2] = packet_recieved_1[3];
+                packet_recieved_1[3] = packet_recieved_1[4];
+                packet_recieved_1[4] = packet_recieved_1[5];
+                packet_recieved_1[5] = packet_recieved_1[6];
+                packet_recieved_1[6] = packet_recieved_1[7];
+                packet_recieved_1[7] = packet_recieved_1[8];
+                packet_recieved_1[8] = packet_recieved_1[9];
+            }
+            break;
+        case SCI_FifoStatus_2_Words : // extract that 2 bytes in the RX FIFO
+            test_2_bytes_in_Rx_buffer++;
+            packet_recieved_1[9] = (HAL_readSCIBFIFO(handle) & 0x00FF);
+            packet_recieved_1[10] = (HAL_readSCIBFIFO(handle) & 0x00FF);
+            if (packet_recieved_1[1] > send_packet_type_0) // matched packet type header
+            {
+                CRC16bit_1 = getCRC16(packet_recieved_1[1],0xFFFF);
+                CRC16bit_1 = getCRC16(packet_recieved_1[2],CRC16bit_1);
+                CRC16bit_1 = getCRC16(packet_recieved_1[3],CRC16bit_1);
+                CRC16bit_1 = getCRC16(packet_recieved_1[4],CRC16bit_1);
+                CRC16bit_1 = getCRC16(packet_recieved_1[5],CRC16bit_1);
+                check_for_packet_received_over_serial_1_steps = check_for_packet_received_over_serial_1_step2;
+                test_counter7++;
+            }
+//            else if (packet_recieved_1[0] > send_packet_type_0)
+//            {
+//                CRC16bit_1 = getCRC16(packet_recieved_1[0],0xFFFF);
+//                CRC16bit_1 = getCRC16(packet_recieved_1[1],CRC16bit_1);
+//                CRC16bit_1 = getCRC16(packet_recieved_1[2],CRC16bit_1);
+//                CRC16bit_1 = getCRC16(packet_recieved_1[3],CRC16bit_1);
+//                CRC16bit_1 = getCRC16(packet_recieved_1[4],CRC16bit_1);
+//                check_for_packet_received_over_serial_1_steps = check_for_packet_received_over_serial_1_step1;
+//                test_counter8++;
+//            }
+            else
+            {
+                test_counter9++;
+                check_for_packet_received_over_serial_1_steps = check_for_packet_received_over_serial_1_step0;
+                packet_recieved_1[0] = packet_recieved_1[2];
+                packet_recieved_1[1] = packet_recieved_1[3];
+                packet_recieved_1[2] = packet_recieved_1[4];
+                packet_recieved_1[3] = packet_recieved_1[5];
+                packet_recieved_1[4] = packet_recieved_1[6];
+                packet_recieved_1[5] = packet_recieved_1[7];
+                packet_recieved_1[6] = packet_recieved_1[8];
+                packet_recieved_1[7] = packet_recieved_1[9];
+                packet_recieved_1[8] = packet_recieved_1[10];
+            }
+            break;
+        case SCI_FifoStatus_3_Words : // extract that 3 bytes in the RX FIFO and discard
+            test_3_bytes_in_Rx_buffer++;
+            HAL_readSCIBFIFO(handle);
+            HAL_readSCIBFIFO(handle);
+            HAL_readSCIBFIFO(handle);
+            break;
+        case SCI_FifoStatus_4_Words : // extract that 4 bytes in the RX FIFO and discard
+            test_4_bytes_in_Rx_buffer++;
+            HAL_readSCIBFIFO(handle);
+            HAL_readSCIBFIFO(handle);
+            HAL_readSCIBFIFO(handle);
+            HAL_readSCIBFIFO(handle);
+            break;
+        default :
+            break;
+    }
+    return;
+}   // end of check_for_packet_received_over_serial_1() function
+
+void check_for_packet_received_over_serial(HAL_Handle handle)
+{
+//    test0++;
+    RxFifoStatusSCIB = HAL_getRxFifoStatusSCIB(handle);
+    switch(RxFifoStatusSCIB)
+      {
+            case SCI_FifoStatus_Empty : // no bytes in the RX FIFO
+                test_no_bytes_in_Rx_buffer++;
+                break;
+
+            case SCI_FifoStatus_1_Word :  // extract that 1 byte in the RX FIFO
+               test_1_byte_in_Rx_buffer++;
+               tempArr[3] = (HAL_readSCIBFIFO(handle) & 0x00FF);
+               if (isValidHeader(tempArr[0]))
+               {
+                   packet_recieved[0] = tempArr[0] & 0x00FF ;
+                   packet_recieved[1] = tempArr[1] & 0x00FF ;
+                   packet_recieved[2] = tempArr[2] & 0x00FF ;
+                   CRCByte            = tempArr[3] & 0x00FF ;
+                   if(getCRCArray(packet_recieved,3) == CRCByte)
+                   {
+                       read_valid_packet(packet_recieved);
+                       tempArr[0] = 0;
+                       tempArr[1] = 0;
+                       tempArr[2] = 0;
+                       tempArr[3] = 0;
+                   }
+               }
+               tempArr[0] = tempArr[1];
+               tempArr[1] = tempArr[2];
+               tempArr[2] = tempArr[3];
+               break;
+
+           case SCI_FifoStatus_2_Words : // extract that 2 bytes in the RX FIFO
+               test_2_bytes_in_Rx_buffer++;
+               tempArr[3] = (HAL_readSCIBFIFO(handle) & 0x00FF);
+               tempArr[4] = (HAL_readSCIBFIFO(handle) & 0x00FF);
+               if (isValidHeader(tempArr[0]))
+               {
+                   packet_recieved[0] = tempArr[0] & 0x00FF ;
+                   packet_recieved[1] = tempArr[1] & 0x00FF ;
+                   packet_recieved[2] = tempArr[2] & 0x00FF ;
+                   CRCByte            = tempArr[3] & 0x00FF ;
+                   if(getCRCArray(packet_recieved,3) == CRCByte)
+                   {
+                       read_valid_packet(packet_recieved);
+                       tempArr[0] = 0;
+                       tempArr[1] = 0;
+                       tempArr[2] = 0;
+                       tempArr[3] = 0;
+                   }
+               }
+               else if (isValidHeader(tempArr[1]))
+               {
+                   packet_recieved[0] = tempArr[1] & 0x00FF ;
+                   packet_recieved[1] = tempArr[2] & 0x00FF ;
+                   packet_recieved[2] = tempArr[3] & 0x00FF ;
+                   CRCByte            = tempArr[4] & 0x00FF ;
+                   if(getCRCArray(packet_recieved,3) == CRCByte)
+                   {
+                       read_valid_packet(packet_recieved);
+                       tempArr[1] = 0;
+                       tempArr[2] = 0;
+                       tempArr[3] = 0;
+                       tempArr[4] = 0;
+                   }
+               }
+               tempArr[0] = tempArr[2];
+               tempArr[1] = tempArr[3];
+               tempArr[2] = tempArr[4];
+               break;
+
+           case SCI_FifoStatus_3_Words : // extract that 3 bytes in the RX FIFO
+               test_3_bytes_in_Rx_buffer++;
+               tempArr[3] = (HAL_readSCIBFIFO(handle) & 0x00FF);
+               tempArr[4] = (HAL_readSCIBFIFO(handle) & 0x00FF);
+               tempArr[5] = (HAL_readSCIBFIFO(handle) & 0x00FF);
+               if (isValidHeader(tempArr[0]))
+               {
+                   packet_recieved[0] = tempArr[0] & 0x00FF ;
+                   packet_recieved[1] = tempArr[1] & 0x00FF ;
+                   packet_recieved[2] = tempArr[2] & 0x00FF ;
+                   CRCByte            = tempArr[3] & 0x00FF ;
+                   if(getCRCArray(packet_recieved,3) == CRCByte)
+                   {
+                       read_valid_packet(packet_recieved);
+                       tempArr[0] = 0;
+                       tempArr[1] = 0;
+                       tempArr[2] = 0;
+                       tempArr[3] = 0;
+                   }
+               }
+               else if (isValidHeader(tempArr[1]))
+               {
+                   packet_recieved[0] = tempArr[1] & 0x00FF ;
+                   packet_recieved[1] = tempArr[2] & 0x00FF ;
+                   packet_recieved[2] = tempArr[3] & 0x00FF ;
+                   CRCByte            = tempArr[4] & 0x00FF ;
+                   if(getCRCArray(packet_recieved,3) == CRCByte)
+                   {
+                       read_valid_packet(packet_recieved);
+                       tempArr[1] = 0;
+                       tempArr[2] = 0;
+                       tempArr[3] = 0;
+                       tempArr[4] = 0;
+                   }
+               }
+               else if (isValidHeader(tempArr[2]))
+               {
+                   packet_recieved[0] = tempArr[2] & 0x00FF ;
+                   packet_recieved[1] = tempArr[3] & 0x00FF ;
+                   packet_recieved[2] = tempArr[4] & 0x00FF ;
+                   CRCByte            = tempArr[5] & 0x00FF ;
+                   if(getCRCArray(packet_recieved,3) == CRCByte)
+                   {
+                       read_valid_packet(packet_recieved);
+                       tempArr[2] = 0;
+                       tempArr[3] = 0;
+                       tempArr[4] = 0;
+                       tempArr[5] = 0;
+                   }
+               }
+               tempArr[0] = tempArr[3];
+               tempArr[1] = tempArr[4];
+               tempArr[2] = tempArr[5];
+               break;
+
+           case SCI_FifoStatus_4_Words : // extract that 4 bytes in the RX FIFO
+               test_4_bytes_in_Rx_buffer++;
+               tempArr[3] = (HAL_readSCIBFIFO(handle) & 0x00FF);
+               tempArr[4] = (HAL_readSCIBFIFO(handle) & 0x00FF);
+               tempArr[5] = (HAL_readSCIBFIFO(handle) & 0x00FF);
+               tempArr[6] = (HAL_readSCIBFIFO(handle) & 0x00FF);
+               if (isValidHeader(tempArr[0]))
+               {
+                   packet_recieved[0] = tempArr[0] & 0x00FF ;
+                   packet_recieved[1] = tempArr[1] & 0x00FF ;
+                   packet_recieved[2] = tempArr[2] & 0x00FF ;
+                   CRCByte            = tempArr[3] & 0x00FF ;
+                   if(getCRCArray(packet_recieved,3) == CRCByte)
+                   {
+                       read_valid_packet(packet_recieved);
+                       tempArr[0] = 0;
+                       tempArr[1] = 0;
+                       tempArr[2] = 0;
+                       tempArr[3] = 0;
+                   }
+               }
+               else if (isValidHeader(tempArr[1]))
+               {
+                   packet_recieved[0] = tempArr[1] & 0x00FF ;
+                   packet_recieved[1] = tempArr[2] & 0x00FF ;
+                   packet_recieved[2] = tempArr[3] & 0x00FF ;
+                   CRCByte            = tempArr[4] & 0x00FF ;
+                   if(getCRCArray(packet_recieved,3) == CRCByte)
+                   {
+                       read_valid_packet(packet_recieved);
+                       tempArr[1] = 0;
+                       tempArr[2] = 0;
+                       tempArr[3] = 0;
+                       tempArr[4] = 0;
+                   }
+               }
+               else if (isValidHeader(tempArr[2]))
+               {
+                   packet_recieved[0] = tempArr[2] & 0x00FF ;
+                   packet_recieved[1] = tempArr[3] & 0x00FF ;
+                   packet_recieved[2] = tempArr[4] & 0x00FF ;
+                   CRCByte            = tempArr[5] & 0x00FF ;
+                   if(getCRCArray(packet_recieved,3) == CRCByte)
+                   {
+                       read_valid_packet(packet_recieved);
+                       tempArr[2] = 0;
+                       tempArr[3] = 0;
+                       tempArr[4] = 0;
+                       tempArr[5] = 0;
+                   }
+               }
+               else if (isValidHeader(tempArr[3]))
+               {
+                   packet_recieved[0] = tempArr[3] & 0x00FF ;
+                   packet_recieved[1] = tempArr[4] & 0x00FF ;
+                   packet_recieved[2] = tempArr[5] & 0x00FF ;
+                   CRCByte            = tempArr[6] & 0x00FF ;
+                   if(getCRCArray(packet_recieved,3) == CRCByte)
+                   {
+                       read_valid_packet(packet_recieved);
+                       tempArr[3] = 0;
+                       tempArr[4] = 0;
+                       tempArr[5] = 0;
+                       tempArr[6] = 0;
+                   }
+               }
+               tempArr[0] = tempArr[4];
+               tempArr[1] = tempArr[5];
+               tempArr[2] = tempArr[6];
+               break;
+           default :
+               break;
+      }
+    return;
+}   // end of check_for_packet_over_serial() function
+
+
+void intialize_ble(HAL_Handle handle)
+{
+    switch(intialize_ble_step)
+    {
+    case BLE_WAKEUP_STEP :
+        //wakeup the device from sleep mode
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,0x0041); // ascii A // can be anything.
+            intialize_ble_step = BLE_WAIT_FOR_WAKEUP_STEP;
+            ble_delay_counter = 0;
+        }
+        break;
+    case BLE_WAIT_FOR_WAKEUP_STEP :
+        if(ble_delay_counter == 300) // hard code : delay of 30ms works. anything under 20ms wasnt enough. was 400 for 15khz, made 300 for 10khz
+        {
+            ble_delay_counter = 0;
+            //intialize_ble_step = BLE_SOFTWARE_RESET_FIRST_STEP1;
+            intialize_ble_step = BLE_SOFTWARE_RESET_FINAL_STEP1;
+        }
+        else
+        {
+            ble_delay_counter++;
+        }
+        break;
+    case BLE_SOFTWARE_RESET_FINAL_STEP1 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,0x0041); // ascii A
+            HAL_writeSCIAFIFO(handle,0x0054); // ascii T
+            HAL_writeSCIAFIFO(handle,0x002B); // ascii +
+            HAL_writeSCIAFIFO(handle,0x0052); // ascii R
+            intialize_ble_step = BLE_SOFTWARE_RESET_FINAL_STEP2;
+        }
+        break;
+    case BLE_SOFTWARE_RESET_FINAL_STEP2 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,0x0045); // ascii E
+            HAL_writeSCIAFIFO(handle,0x0053); // ascii S
+            HAL_writeSCIAFIFO(handle,0x0045); // ascii E
+            HAL_writeSCIAFIFO(handle,0x0054); // ascii T
+            intialize_ble_step = BLE_WAIT_FOR_SOFTWARE_RESET_FINAL_STEP1;
+            ble_delay_counter = 0;
+        }
+        break;
+    case BLE_WAIT_FOR_SOFTWARE_RESET_FINAL_STEP1 :
+        if(ble_delay_counter == 300) // hard code : delay of 30ms works. anything under 20ms wasnt enough. was 400 for 15khz, made 300 for 10khz
+        {
+            ble_delay_counter = 0;
+            intialize_ble_step = BLE_FLUSH_RX_BUFFER ;
+        }
+        else
+        {
+            ble_delay_counter++;
+        }
+        break;
+    case BLE_FLUSH_RX_BUFFER :
+        RxFifoStatusSCIA = HAL_getRxFifoStatusSCIA(handle);
+        if(RxFifoStatusSCIA == SCI_FifoStatus_4_Words)
+        {
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+        }
+        if(RxFifoStatusSCIA == SCI_FifoStatus_3_Words)
+        {
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+        }
+        if(RxFifoStatusSCIA == SCI_FifoStatus_2_Words)
+        {
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+        }
+        if(RxFifoStatusSCIA == SCI_FifoStatus_1_Word)
+        {
+            HAL_readSCIAFIFO(handle);
+        }
+        intialize_ble_step = BLE_SET_PWMODE_STEP1 ;
+        break;
+    case BLE_SET_PWMODE_STEP1 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,0x0041); // ascii A
+            HAL_writeSCIAFIFO(handle,0x0054); // ascii T
+            HAL_writeSCIAFIFO(handle,0x002B); // ascii +
+            HAL_writeSCIAFIFO(handle,0x0050); // ascii P
+            intialize_ble_step = BLE_SET_PWMODE_STEP2;
+        }
+        break;
+    case BLE_SET_PWMODE_STEP2 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,0x0057); // ascii W
+            HAL_writeSCIAFIFO(handle,0x004D); // ascii M
+            HAL_writeSCIAFIFO(handle,0x004F); // ascii O
+            HAL_writeSCIAFIFO(handle,0x0044); // ascii D
+            intialize_ble_step = BLE_SET_PWMODE_STEP3;
+        }
+        break;
+    case BLE_SET_PWMODE_STEP3 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,0x0045); // ascii E
+            HAL_writeSCIAFIFO(handle,0x003D); // ascii =
+            HAL_writeSCIAFIFO(handle,0x0030); // ascii 0
+            intialize_ble_step = BLE_SET_PWMODE_STEP4;
+            ble_delay_counter = 0;
+        }
+        break;
+    case BLE_SET_PWMODE_STEP4 :
+        RxFifoStatusSCIA = HAL_getRxFifoStatusSCIA(handle);
+        if(RxFifoStatusSCIA == SCI_FifoStatus_1_Word)
+        {
+            ble_response_array[ble_delay_counter] = (HAL_readSCIAFIFO(handle) & 0x00FF);
+            ble_delay_counter++;
+        }
+        if(ble_delay_counter == 5)
+        {
+            ble_delay_counter = 0;
+            if(ble_response_array[0] == 0x002B) // ascii +
+            {
+                if(ble_response_array[1] == 0x004F) // ascii O
+                {
+                    if(ble_response_array[2] == 0x004B) // ascii K
+                    {
+                        if(ble_response_array[3] == 0x000D) // ascii \r
+                        {
+                            if(ble_response_array[4] == 0x000A) // ascii \n
+                            {
+                                ble_pwmode_set = true;  // device name set
+                                intialize_ble_step = BLE_LAST_STEP;
+                            }
+                        }
+                    }
+                }
+            }
+            if(!ble_pwmode_set)
+            {
+                intialize_ble_step = BLE_SOFTWARE_RESET_FINAL_STEP1 ;
+            }
+        }
+        break;
+    case BLE_LAST_STEP :
+        start_intialize_ble = false;
+        ble_intilization_done = true;
+        break;
+    default :
+        break;
+    }
+    return;
+} // end of intialize_ble() function
+
+void send_command_to_ble_to_change_broadcasting(HAL_Handle handle)
+{
+    broadcasting_response_recieved = false;
+    switch(broadcasting_ble_steps)
+    {
+    case broadcasting_ble_step_wait150ms :
+        if(ble_broadcasting)
+        {
+            if(ble_delay_counter == 2500) // hard code : delay of 250ms , 2500 for 10khz
+            {
+                ble_delay_counter = 0;
+                broadcasting_ble_steps = broadcasting_ble_step_FLUSH_RX_BUFFER ;
+            }
+            else
+            {
+                ble_delay_counter++;
+            }
+        }
+        else
+        {
+            if(ble_delay_counter == 2500) // hard code : delay of 250ms , 2500 for 10khz
+            {
+                ble_delay_counter = 0;
+                broadcasting_ble_steps = broadcasting_ble_step_FLUSH_RX_BUFFER ;
+            }
+            else
+            {
+                ble_delay_counter++;
+            }
+        }
+        break;
+    case broadcasting_ble_step_FLUSH_RX_BUFFER :
+        RxFifoStatusSCIA = HAL_getRxFifoStatusSCIA(handle);
+        switch(RxFifoStatusSCIA)
+        {
+        case SCI_FifoStatus_4_Words :
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+            break;
+        case SCI_FifoStatus_3_Words :
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+            break;
+        case SCI_FifoStatus_2_Words :
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+            break;
+        case SCI_FifoStatus_1_Word :
+            HAL_readSCIAFIFO(handle);
+            break;
+        default :
+            break;
+        }
+        broadcasting_ble_steps = broadcasting_ble_step1 ;
+        break;
+    case broadcasting_ble_step1 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,0x0041); // ascii A
+            HAL_writeSCIAFIFO(handle,0x0054); // ascii T
+            HAL_writeSCIAFIFO(handle,0x002B); // ascii +
+            HAL_writeSCIAFIFO(handle,0x0043); // ascii C
+            broadcasting_ble_steps = broadcasting_ble_step2;
+        }
+        break;
+    case broadcasting_ble_step2 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,0x0046); // ascii F
+            HAL_writeSCIAFIFO(handle,0x0055); // ascii U
+            HAL_writeSCIAFIFO(handle,0x004E); // ascii N
+            HAL_writeSCIAFIFO(handle,0x003D); // ascii =
+            broadcasting_ble_steps = broadcasting_ble_step3;
+        }
+        break;
+    case broadcasting_ble_step3 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            if(ble_broadcasting)
+                HAL_writeSCIAFIFO(handle,0x0030); // ascii 0 // to stop broadcasting
+            else
+                HAL_writeSCIAFIFO(handle,0x0031); // ascii 1 // to start broadcasting
+            broadcasting_ble_steps = broadcasting_ble_step4;
+            ble_delay_counter = 15;
+        }
+        break;
+    case broadcasting_ble_step4 :
+        RxFifoStatusSCIA = HAL_getRxFifoStatusSCIA(handle);
+        if(RxFifoStatusSCIA == SCI_FifoStatus_1_Word)
+        {
+            ble_recieve_packet_array[ble_delay_counter] = (HAL_readSCIAFIFO(handle) & 0x00FF);
+            ble_delay_counter--;
+        }
+        if(ble_delay_counter == 10)
+        {
+            ble_delay_counter = 15;
+            broadcasting_ble_steps = broadcasting_ble_step_wait150ms;
+            if(ble_recieve_packet_array[15] == 0x002B) // ascii +
+            {
+                if(ble_recieve_packet_array[14] == 0x004F) // ascii O
+                {
+                    if(ble_recieve_packet_array[13] == 0x004B) // ascii K
+                    {
+                        if(ble_recieve_packet_array[12] == 0x000D) // ascii \r
+                        {
+                            if(ble_recieve_packet_array[11] == 0x000A) // ascii \n
+                            {
+                                broadcasting_response_recieved = true;
+                                call_send_command_to_ble_to_change_broadcasting = false;
+                                enable_ble_recieve_data = true;
+                                if(ble_broadcasting)
+                                {
+                                    ble_broadcasting = false;  // ble broadcasting stopped
+                                    enable_ble_send_data = true;
+                                    counter_send_ble_packet = 0;
+                                    send_packet_over_ble_steps = send_packet_over_ble_gather_data_step1;
+                                }
+                                else
+                                {
+                                    ble_broadcasting = true; // ble broadcasting started
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if(!broadcasting_response_recieved)
+            {
+                broadcasting_ble_steps = broadcasting_ble_step_FLUSH_RX_BUFFER;
+            }
+        }
+        break;
+    default :
+        break;
+    }
+    return;
+}// end of send_command_to_ble_to_change_broadcasting() function
+
+
+void send_packet_over_ble(HAL_Handle handle)
+{
+    switch(send_packet_over_ble_steps)
+    {
+    case send_packet_over_ble_gather_data_step1 :
+        ble_response_array[0] = (send_packet_over_ble_header >> 8) & 0x00FF ;
+        ble_response_array[1] = send_packet_over_ble_header & 0x00FF ;
+        position_left = (uint16_t) ball_position_mm;
+        ble_response_array[2] = (position_left >> 8) & 0x00FF ;
+        ble_response_array[3] = position_left & 0x00FF ;
+        position_right = (uint16_t) ball_position_other_motor_mm;
+        ble_response_array[4] = (position_right >> 8) & 0x00FF ;
+        ble_response_array[5] = position_right & 0x00FF ;
+        force_left_centiLbs = wt_centi_lb_measured;
+        ble_response_array[6] = (force_left_centiLbs >> 8) & 0x00FF ;
+        ble_response_array[7] = force_left_centiLbs & 0x00FF ;
+        force_right_centiLbs = wt_centi_lb_measured_other_motor;
+        ble_response_array[8] = (force_right_centiLbs >> 8) & 0x00FF ;
+        ble_response_array[9] = force_right_centiLbs & 0x00FF ;
+        status_flags = ((Status_motor << 8) & 0xFF00) + (Status_other_motor & 0x00FF);
+        ble_response_array[10] = (status_flags >> 8) & 0x00FF ;
+        ble_response_array[11] = status_flags & 0x00FF ;
+        send_packet_over_ble_steps = send_packet_over_ble_gather_data_step2 ;
+        break;
+    case send_packet_over_ble_gather_data_step2 :
+        ble_response_array[12] = (battery_voltage_centiV >> 8) & 0x00FF ;
+        ble_response_array[13] = battery_voltage_centiV & 0x00FF ;
+        nominal_force_setting_left_centiLbs = wt_centi_lb;
+        ble_response_array[14] = (nominal_force_setting_left_centiLbs >> 8) & 0x00FF ;
+        ble_response_array[15] = nominal_force_setting_left_centiLbs & 0x00FF ;
+        nominal_force_setting_right_centiLbs = MotorForce_Set_centi_lb_from_other_motor;
+        ble_response_array[16] = (nominal_force_setting_right_centiLbs >> 8) & 0x00FF ;
+        ble_response_array[17] = nominal_force_setting_right_centiLbs & 0x00FF ;
+        start_force_position_setting_left = start_force_position_mm;
+//        start_force_position_setting_left = start_force_position_from_other_motor_mm;
+        ble_response_array[18] = (start_force_position_setting_left >> 8) & 0x00FF ;
+        ble_response_array[19] = start_force_position_setting_left & 0x00FF ;
+        start_force_position_setting_right = start_force_position_from_other_motor_mm;
+        ble_response_array[20] = (start_force_position_setting_right >> 8) & 0x00FF ;
+        ble_response_array[21] = start_force_position_setting_right & 0x00FF ;
+//        ble_response_array[20] = 0x0000;
+//        ble_response_array[21] = 0x0000;
+        ble_response_array[22] = 0x0000;
+        ble_response_array[23] = 0x0000;
+        ble_response_array[24] = 0x0000;
+        ble_response_array[25] = 0x0000;
+        ble_response_array[26] = ((timestamp >> 24) & 0x000000FF );
+        ble_response_array[27] = ((timestamp >> 16) & 0x000000FF );
+        ble_response_array[28] = ((timestamp >> 8) & 0x000000FF );
+        ble_response_array[29] = (timestamp & 0x000000FF);
+        send_packet_over_ble_steps = send_packet_over_ble_gather_crc16_step;
+        crc16_send_packet = 0xFFFF;
+        ble_response_array_counter = 0;
+        break;
+    case send_packet_over_ble_gather_crc16_step :
+        crc16_send_packet = getCRC16(ble_response_array[ble_response_array_counter],crc16_send_packet);
+        if(ble_response_array_counter == 29)
+        {
+            send_packet_over_ble_steps = send_packet_over_ble_point_to_1st_central_step;
+        }
+        else
+        {
+            ble_response_array_counter++;
+        }
+        break;
+    case send_packet_over_ble_point_to_1st_central_step :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty) // comment, this is not necssary if we want to send to more than 1 master devices
+        {
+            HAL_writeSCIAFIFO(handle,0x0031); // ascii 1
+            HAL_writeSCIAFIFO(handle,0x003E); // ascii >
+            ble_response_array[30] = (crc16_send_packet >> 8) & 0x00FF ;
+            ble_response_array[31] = crc16_send_packet & 0x00FF ;
+            send_packet_over_ble_steps = send_packet_over_ble_send_4bytes_step1;
+        }
+        break;
+    case send_packet_over_ble_send_4bytes_step1 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,ble_response_array[0]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[1]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[2]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[3]);
+            send_packet_over_ble_steps = send_packet_over_ble_send_4bytes_step2;
+        }
+        break;
+    case send_packet_over_ble_send_4bytes_step2 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,ble_response_array[4]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[5]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[6]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[7]);
+            send_packet_over_ble_steps = send_packet_over_ble_send_4bytes_step3;
+        }
+        break;
+    case send_packet_over_ble_send_4bytes_step3 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,ble_response_array[8]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[9]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[10]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[11]);
+            send_packet_over_ble_steps = send_packet_over_ble_send_4bytes_step4;
+        }
+        break;
+    case send_packet_over_ble_send_4bytes_step4 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,ble_response_array[12]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[13]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[14]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[15]);
+            send_packet_over_ble_steps = send_packet_over_ble_send_4bytes_step5;
+        }
+        break;
+    case send_packet_over_ble_send_4bytes_step5 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,ble_response_array[16]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[17]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[18]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[19]);
+            send_packet_over_ble_steps = send_packet_over_ble_send_4bytes_step6;
+        }
+        break;
+    case send_packet_over_ble_send_4bytes_step6 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,ble_response_array[20]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[21]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[22]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[23]);
+            send_packet_over_ble_steps = send_packet_over_ble_send_4bytes_step7;
+        }
+        break;
+    case send_packet_over_ble_send_4bytes_step7 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,ble_response_array[24]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[25]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[26]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[27]);
+            send_packet_over_ble_steps = send_packet_over_ble_send_4bytes_step8;
+        }
+        break;
+    case send_packet_over_ble_send_4bytes_step8 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            HAL_writeSCIAFIFO(handle,ble_response_array[28]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[29]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[30]);
+            HAL_writeSCIAFIFO(handle,ble_response_array[31]);
+            send_packet_over_ble_steps = send_packet_over_ble_bypass_step1;
+        }
+        break;
+    case send_packet_over_ble_bypass_step1 :
+        if(HAL_getTxFifoStatusSCIA(handle) == SCI_FifoStatus_Empty)
+        {
+            ble_packet_sent_counter++;
+            ble_packets_lost = ble_packet_sent_counter - ble_packet_sent_success_counter;
+            send_packet_over_ble_steps = send_packet_over_ble_bypass_step2;
+        }
+        break;
+    case send_packet_over_ble_bypass_step2 :
+        break;
+    default :
+        break;
+    }
+    if(counter_send_ble_packet == counter_send_ble_packet_max) // 300 for 10khz = 33.33hz (30ms)
+    {
+        counter_send_ble_packet = 0;
+        send_packet_over_ble_steps = send_packet_over_ble_gather_data_step1;
+    }
+    else
+    {
+        counter_send_ble_packet++;
+    }
+    return;
+}// end of send_packet_over_ble() function
+
+void read_packet_over_ble(HAL_Handle handle)
+{
+    test_counter1++;
+    RxFifoStatusSCIA = HAL_getRxFifoStatusSCIA(handle);
+    switch (RxFifoStatusSCIA)
+    {
+        case SCI_FifoStatus_4_Words : // if 4 words are in buffer from past, read and discard them
+            test_counter2++;
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+            break;
+        case SCI_FifoStatus_3_Words :// if 3 words are in buffer from past, read and discard them
+            test_counter3++;
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+            break;
+        case SCI_FifoStatus_2_Words : // if 2 words are in buffer from past, read and discard them
+            test_counter4++;
+            HAL_readSCIAFIFO(handle);
+            HAL_readSCIAFIFO(handle);
+            break;
+        case SCI_FifoStatus_1_Word :
+            test_counter5++;
+            if(!ble_central_host_connected)
+            {
+                test_counter6++;
+                ble_recieve_packet_array[8] =  (HAL_readSCIAFIFO(handle) & 0x00FF);
+                if(((ble_recieve_packet_array[0] << 8) + ble_recieve_packet_array[1]) == BLE_central_host_connected_header) // ascii ++
+                {
+                    if(ble_recieve_packet_array[2] == 0x002B) // ascii +
+                    {
+                        if(ble_recieve_packet_array[3] == 0x002B) // ascii +
+                        {
+                            if(ble_recieve_packet_array[4] == 0x002B) // ascii +
+                            {
+                                if(ble_recieve_packet_array[5] == 0x0043) // ascii C
+                                {
+                                    if(ble_recieve_packet_array[6] == 0x0031) // ascii 1
+                                    {
+                                        if(ble_recieve_packet_array[7] == 0x000D) // ascii \r
+                                        {
+                                            if(ble_recieve_packet_array[8] == 0x000A) // ascii \n
+                                            {
+                                                ble_central_host_connected = true;
+                                                call_send_command_to_ble_to_change_broadcasting = true;
+                                                ble_broadcasting = true;
+                                                enable_ble_recieve_data = false;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if(!ble_central_host_connected)
+                {
+                    ble_recieve_packet_array[0] = ble_recieve_packet_array[1];
+                    ble_recieve_packet_array[1] = ble_recieve_packet_array[2];
+                    ble_recieve_packet_array[2] = ble_recieve_packet_array[3];
+                    ble_recieve_packet_array[3] = ble_recieve_packet_array[4];
+                    ble_recieve_packet_array[4] = ble_recieve_packet_array[5];
+                    ble_recieve_packet_array[5] = ble_recieve_packet_array[6];
+                    ble_recieve_packet_array[6] = ble_recieve_packet_array[7];
+                    ble_recieve_packet_array[7] = ble_recieve_packet_array[8];
+                }
+            }
+            else
+            {
+                test_counter8++;
+                ble_recieve_packet_array[15] =  (HAL_readSCIAFIFO(handle) & 0x00FF);
+
+                if(((ble_recieve_packet_array[6] << 8) + ble_recieve_packet_array[7]) == BLE_central_host_disconnected_header)// ascii +-
+                {
+                    if(ble_recieve_packet_array[8] == 0x002D) // ascii -
+                    {
+                        if(ble_recieve_packet_array[9] == 0x002D) // ascii -
+                        {
+                            if(ble_recieve_packet_array[10] == 0x002D) // ascii -
+                            {
+                                if(ble_recieve_packet_array[11] == 0x002D) // ascii -
+                                {
+                                    if(ble_recieve_packet_array[12] == 0x0043) // ascii C
+                                    {
+                                        if(ble_recieve_packet_array[13] == 0x0031) // ascii 1
+                                        {
+                                            if(ble_recieve_packet_array[14] == 0x000D) // ascii \r
+                                            {
+                                                if(ble_recieve_packet_array[15] == 0x000A) // ascii \n
+                                                {
+                                                    //test5++;
+                                                    ble_central_host_connected = false;
+                                                    enable_ble_send_data = false;
+                                                    call_send_command_to_ble_to_change_broadcasting = true;
+                                                    enable_ble_recieve_data = false;
+                                                    ble_broadcasting = false;
+                                                    read_packet_over_ble_steps = read_packet_over_ble_step0;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if(ble_central_host_connected)
+                {
+                    if(((ble_recieve_packet_array[9] << 8) + ble_recieve_packet_array[10]) == 0x2B31)// ascii + 1
+                    {
+                        if(((ble_recieve_packet_array[11] << 8) + ble_recieve_packet_array[12]) == 0x3A4F)// ascii : O
+                        {
+                            if(((ble_recieve_packet_array[13] << 8) + ble_recieve_packet_array[14]) == 0x4B0D)// ascii K \r
+                            {
+                                if(ble_recieve_packet_array[15] == 0x000A) // ascii \n
+                                {
+                                    ble_packet_sent_success_counter++;
+                                }
+                            }
+                        }
+                    }
+                    if(((ble_recieve_packet_array[0] << 8) + ble_recieve_packet_array[1]) == BLE_set_all_variables_in_one_packet_header)
+                    {
+                        test_counter9++;
+                        crc16_recieve_packet = getCRC16(ble_recieve_packet_array[0],0xFFFF);
+                        read_packet_over_ble_steps = read_packet_over_ble_step1;
+                        ble_recieve_packet_array_counter = 0;
+                    }
+                    else
+                    {
+                    read_packet_over_ble_steps = read_packet_over_ble_step0;
+                    }
+                    ble_recieve_packet_array[0] = ble_recieve_packet_array[1];
+                    ble_recieve_packet_array[1] = ble_recieve_packet_array[2];
+                    ble_recieve_packet_array[2] = ble_recieve_packet_array[3];
+                    ble_recieve_packet_array[3] = ble_recieve_packet_array[4];
+                    ble_recieve_packet_array[4] = ble_recieve_packet_array[5];
+                    ble_recieve_packet_array[5] = ble_recieve_packet_array[6];
+                    ble_recieve_packet_array[6] = ble_recieve_packet_array[7];
+                    ble_recieve_packet_array[7] = ble_recieve_packet_array[8];
+                    ble_recieve_packet_array[8] = ble_recieve_packet_array[9];
+                    ble_recieve_packet_array[9] = ble_recieve_packet_array[10];
+                    ble_recieve_packet_array[10] = ble_recieve_packet_array[11];
+                    ble_recieve_packet_array[11] = ble_recieve_packet_array[12];
+                    ble_recieve_packet_array[12] = ble_recieve_packet_array[13];
+                    ble_recieve_packet_array[13] = ble_recieve_packet_array[14];
+                    ble_recieve_packet_array[14] = ble_recieve_packet_array[15];
+                }
+            }
+            break;
+        case SCI_FifoStatus_Empty :
+            switch(read_packet_over_ble_steps)
+            {
+            case read_packet_over_ble_step1 :
+                crc16_recieve_packet = getCRC16(ble_recieve_packet_array[ble_recieve_packet_array_counter],crc16_recieve_packet);
+                if(ble_recieve_packet_array_counter == 11)
+                {
+                    read_packet_over_ble_steps = read_packet_over_ble_step2;
+                }
+                ble_recieve_packet_array_counter++;
+                break;
+            case read_packet_over_ble_step2 :
+                crc16_recieve_packet = getCRC16(ble_recieve_packet_array[12],crc16_recieve_packet);
+                if(crc16_recieve_packet == ((ble_recieve_packet_array[13] << 8 ) + ble_recieve_packet_array[14]))
+                {
+                    nominal_force_setting_input_over_ble_left_centiLbs = ( ble_recieve_packet_array[1] << 8 ) + ble_recieve_packet_array[2];
+                    nominal_force_setting_input_over_ble_right_centiLbs = ( ble_recieve_packet_array[3] << 8 ) + ble_recieve_packet_array[4];
+                    start_force_position_mm = ( ble_recieve_packet_array[5] << 8 ) + ble_recieve_packet_array[6];
+                    status_flags_input_over_ble_left = ble_recieve_packet_array[7] & 0x00FF;
+                    status_flags_input_over_ble_right = ble_recieve_packet_array[8] & 0x00FF; // this should be sent to other motor
+                    if(!input_manual_not_from_ble)
+                    {
+                        bar_stabilization_factor_enable = ((status_flags_input_over_ble_left & 0b0000000000000100) >> 2);
+                        check_platform_force_balance = ((status_flags_input_over_ble_left & 0b0000000000001000) >> 3);
+                    }
+                    ble_packet_recieved++;
+                }
+                read_packet_over_ble_steps = read_packet_over_ble_step0;
+                break;
+            case read_packet_over_ble_step0 :
+                // do nothing
+                break;
+            default :
+                break;
+            }
+            break;
+        default :
+            break;
+    }
+    return;
+}// end of read_packet_over_ble() function
+
+//void calc_led_display_data1(void)
+//{
+//    temp1 = three_digit_led_number/10.0;
+//    varr1 = (int)temp1;
+//    right_digit_led_number = three_digit_led_number - (varr1 * 10);
+//
+//    switch (right_digit_led_number)
+//    {
+//    case 0 :
+//        right_digit_top_left_led_bit = true;
+//        right_digit_bottom_left_led_bit = true;
+//        right_digit_bottom_led_bit = true;
+//        right_digit_middle_led_bit = false;
+//        right_digit_top_led_bit = true;
+//        right_digit_top_right_led_bit = true;
+//        right_digit_bottom_right_led_bit = true;
+//        break;
+//    case 1 :
+//        right_digit_top_left_led_bit = false;
+//        right_digit_bottom_left_led_bit = false;
+//        right_digit_bottom_led_bit = false;
+//        right_digit_middle_led_bit = false;
+//        right_digit_top_led_bit = false;
+//        right_digit_top_right_led_bit = true;
+//        right_digit_bottom_right_led_bit = true;
+//        break;
+//    case 2 :
+//        right_digit_top_left_led_bit = false;
+//        right_digit_bottom_left_led_bit = true;
+//        right_digit_bottom_led_bit = true;
+//        right_digit_middle_led_bit = true;
+//        right_digit_top_led_bit = true;
+//        right_digit_top_right_led_bit = true;
+//        right_digit_bottom_right_led_bit = false;
+//        break;
+//    case 3 :
+//        right_digit_top_left_led_bit = false;
+//        right_digit_bottom_left_led_bit = false;
+//        right_digit_bottom_led_bit = true;
+//        right_digit_middle_led_bit = true;
+//        right_digit_top_led_bit = true;
+//        right_digit_top_right_led_bit = true;
+//        right_digit_bottom_right_led_bit = true;
+//        break;
+//    case 4 :
+//        right_digit_top_left_led_bit = true;
+//        right_digit_bottom_left_led_bit = false;
+//        right_digit_bottom_led_bit = false;
+//        right_digit_middle_led_bit = true;
+//        right_digit_top_led_bit = false;
+//        right_digit_top_right_led_bit = true;
+//        right_digit_bottom_right_led_bit = true;
+//        break;
+//    case 5 :
+//        right_digit_top_left_led_bit = true;
+//        right_digit_bottom_left_led_bit = false;
+//        right_digit_bottom_led_bit = true;
+//        right_digit_middle_led_bit = true;
+//        right_digit_top_led_bit = true;
+//        right_digit_top_right_led_bit = false;
+//        right_digit_bottom_right_led_bit = true;
+//        break;
+//    case 6 :
+//        right_digit_top_left_led_bit = true;
+//        right_digit_bottom_left_led_bit = true;
+//        right_digit_bottom_led_bit = true;
+//        right_digit_middle_led_bit = true;
+//        right_digit_top_led_bit = true;
+//        right_digit_top_right_led_bit = false;
+//        right_digit_bottom_right_led_bit = true;
+//        break;
+//    case 7 :
+//        right_digit_top_left_led_bit = false;
+//        right_digit_bottom_left_led_bit = false;
+//        right_digit_bottom_led_bit = false;
+//        right_digit_middle_led_bit = false;
+//        right_digit_top_led_bit = true;
+//        right_digit_top_right_led_bit = true;
+//        right_digit_bottom_right_led_bit = true;
+//        break;
+//    case 8 :
+//        right_digit_top_left_led_bit = true;
+//        right_digit_bottom_left_led_bit = true;
+//        right_digit_bottom_led_bit = true;
+//        right_digit_middle_led_bit = true;
+//        right_digit_top_led_bit = true;
+//        right_digit_top_right_led_bit = true;
+//        right_digit_bottom_right_led_bit = true;
+//        break;
+//    case 9 :
+//        right_digit_top_left_led_bit = true;
+//        right_digit_bottom_left_led_bit = false;
+//        right_digit_bottom_led_bit = true;
+//        right_digit_middle_led_bit = true;
+//        right_digit_top_led_bit = true;
+//        right_digit_top_right_led_bit = true;
+//        right_digit_bottom_right_led_bit = true;
+//        break;
+//    default :
+//        break;
+//    }
+//
+//    led_display_data1 = (((uint16_t)button1_led_bit) << 7) + (((uint16_t)button2_led_bit) << 6) + (((uint16_t)platform_switch_led_top_bit) << 5) +
+//            (((uint16_t)platform_switch_led_middle_bit) << 4) + (((uint16_t)platform_switch_led_bottom_bit) << 3) + (((uint16_t)in_led_segment_bit) << 2) +
+//            (((uint16_t)lb_led_segment_bit) << 1) + ((uint16_t)right_digit_bottom_right_led_bit);
+//
+//} // end of calc_led_display_data1() function
+//
+//void calc_led_display_data2(void)
+//{
+//    temp2 = varr1/10.0;
+//    varr2 = (int)temp2;
+//    middle_digit_led_number =  varr1 - (varr2 * 10);
+//
+//    if(varr2 > 0)
+//        left_digit_led_number = true;
+//    else
+//        left_digit_led_number = false;
+//
+//    left_digit_top_led_bit = left_digit_led_number;
+//    left_digit_bottom_led_bit = left_digit_led_number;
+//
+//    switch (middle_digit_led_number)
+//    {
+//    case 0 :
+//        middle_digit_top_left_led_bit = true;
+//        middle_digit_bottom_left_led_bit = true;
+//        middle_digit_bottom_led_bit = true;
+//        middle_digit_middle_led_bit = false;
+//        middle_digit_top_led_bit = true;
+//        middle_digit_top_right_led_bit = true;
+//        middle_digit_bottom_right_led_bit = true;
+//        break;
+//    case 1 :
+//        middle_digit_top_left_led_bit = false;
+//        middle_digit_bottom_left_led_bit = false;
+//        middle_digit_bottom_led_bit = false;
+//        middle_digit_middle_led_bit = false;
+//        middle_digit_top_led_bit = false;
+//        middle_digit_top_right_led_bit = true;
+//        middle_digit_bottom_right_led_bit = true;
+//        break;
+//    case 2 :
+//        middle_digit_top_left_led_bit = false;
+//        middle_digit_bottom_left_led_bit = true;
+//        middle_digit_bottom_led_bit = true;
+//        middle_digit_middle_led_bit = true;
+//        middle_digit_top_led_bit = true;
+//        middle_digit_top_right_led_bit = true;
+//        middle_digit_bottom_right_led_bit = false;
+//        break;
+//    case 3 :
+//        middle_digit_top_left_led_bit = false;
+//        middle_digit_bottom_left_led_bit = false;
+//        middle_digit_bottom_led_bit = true;
+//        middle_digit_middle_led_bit = true;
+//        middle_digit_top_led_bit = true;
+//        middle_digit_top_right_led_bit = true;
+//        middle_digit_bottom_right_led_bit = true;
+//        break;
+//    case 4 :
+//        middle_digit_top_left_led_bit = true;
+//        middle_digit_bottom_left_led_bit = false;
+//        middle_digit_bottom_led_bit = false;
+//        middle_digit_middle_led_bit = true;
+//        middle_digit_top_led_bit = false;
+//        middle_digit_top_right_led_bit = true;
+//        middle_digit_bottom_right_led_bit = true;
+//        break;
+//    case 5 :
+//        middle_digit_top_left_led_bit = true;
+//        middle_digit_bottom_left_led_bit = false;
+//        middle_digit_bottom_led_bit = true;
+//        middle_digit_middle_led_bit = true;
+//        middle_digit_top_led_bit = true;
+//        middle_digit_top_right_led_bit = false;
+//        middle_digit_bottom_right_led_bit = true;
+//        break;
+//    case 6 :
+//        middle_digit_top_left_led_bit = true;
+//        middle_digit_bottom_left_led_bit = true;
+//        middle_digit_bottom_led_bit = true;
+//        middle_digit_middle_led_bit = true;
+//        middle_digit_top_led_bit = true;
+//        middle_digit_top_right_led_bit = false;
+//        middle_digit_bottom_right_led_bit = true;
+//        break;
+//    case 7 :
+//        middle_digit_top_left_led_bit = false;
+//        middle_digit_bottom_left_led_bit = false;
+//        middle_digit_bottom_led_bit = false;
+//        middle_digit_middle_led_bit = false;
+//        middle_digit_top_led_bit = true;
+//        middle_digit_top_right_led_bit = true;
+//        middle_digit_bottom_right_led_bit = true;
+//        break;
+//    case 8 :
+//        middle_digit_top_left_led_bit = true;
+//        middle_digit_bottom_left_led_bit = true;
+//        middle_digit_bottom_led_bit = true;
+//        middle_digit_middle_led_bit = true;
+//        middle_digit_top_led_bit = true;
+//        middle_digit_top_right_led_bit = true;
+//        middle_digit_bottom_right_led_bit = true;
+//        break;
+//    case 9 :
+//        middle_digit_top_left_led_bit = true;
+//        middle_digit_bottom_left_led_bit = false;
+//        middle_digit_bottom_led_bit = true;
+//        middle_digit_middle_led_bit = true;
+//        middle_digit_top_led_bit = true;
+//        middle_digit_top_right_led_bit = true;
+//        middle_digit_bottom_right_led_bit = true;
+//        break;
+//    default :
+//        break;
+//    }
+//
+//    led_display_data2 =  (((uint16_t)right_digit_top_right_led_bit) << 15) + (((uint16_t)right_digit_top_led_bit) << 14) + (((uint16_t)right_digit_middle_led_bit) << 13) +
+//            (((uint16_t)right_digit_bottom_led_bit) << 12) + (((uint16_t)right_digit_bottom_left_led_bit) << 11) + (((uint16_t)right_digit_top_left_led_bit) << 10) +
+//            (((uint16_t)middle_digit_bottom_right_led_bit) << 9) + (((uint16_t)middle_digit_top_right_led_bit) << 8) +
+//            (((uint16_t)middle_digit_top_led_bit) << 7) + (((uint16_t)middle_digit_middle_led_bit) << 6) + (((uint16_t)middle_digit_bottom_led_bit) << 5) +
+//            (((uint16_t)middle_digit_bottom_left_led_bit) << 4) + (((uint16_t)middle_digit_top_left_led_bit) << 3) + (((uint16_t)left_digit_bottom_led_bit) << 2) +
+//            (((uint16_t)left_digit_top_led_bit) << 1) + ((uint16_t)locked_led_segment_bit);
+//
+//} // end of calc_led_display_data2() function
+
+
+void main(void)
+{
+  uint_least8_t estNumber = 0;
+
+#ifdef FAST_ROM_V1p6
+  uint_least8_t ctrlNumber = 0;
+#endif
+
+  // Only used if running from FLASH
+  // Note that the variable FLASH is defined by the project
+  #ifdef FLASH
+  // Copy time critical code and Flash setup code to RAM
+  // The RamfuncsLoadStart, RamfuncsLoadEnd, and RamfuncsRunStart
+  // symbols are created by the linker. Refer to the linker files.
+  memCopy((uint16_t *)&RamfuncsLoadStart,(uint16_t *)&RamfuncsLoadEnd,(uint16_t *)&RamfuncsRunStart);
+
+  #ifdef CSM_ENABLE
+    //copy .econst to unsecure RAM
+    if(*econst_end - *econst_start)
+      {
+        memCopy((uint16_t *)&econst_start,(uint16_t *)&econst_end,(uint16_t *)&econst_ram_load);
+      }
+
+    //copy .switch ot unsecure RAM
+    if(*switch_end - *switch_start)
+      {
+        memCopy((uint16_t *)&switch_start,(uint16_t *)&switch_end,(uint16_t *)&switch_ram_load);
+      }
+  #endif
+  #endif
+
+  // initialize the hardware abstraction layer
+  halHandle = HAL_init(&hal,sizeof(hal));
+
+
+  // check for errors in user parameters
+  USER_checkForErrors(&gUserParams);
+
+
+  // store user parameter error in global variable
+  gMotorVars.UserErrorCode = USER_getErrorCode(&gUserParams);
+
+
+  // do not allow code execution if there is a user parameter error
+  if(gMotorVars.UserErrorCode != USER_ErrorCode_NoError)
+    {
+      for(;;)
+        {
+          gMotorVars.Flag_enableSys = false;
+        }
+    }
+
+
+  // initialize the user parameters
+  USER_setParams(&gUserParams);
+
+
+  // set the hardware abstraction layer parameters
+  HAL_setParams(halHandle,&gUserParams);
+
+
+  // initialize the controller
+#ifdef FAST_ROM_V1p6
+  ctrlHandle = CTRL_initCtrl(ctrlNumber, estNumber);  		//v1p6 format (06xF and 06xM devices)
+  controller_obj = (CTRL_Obj *)ctrlHandle;
+#else
+  ctrlHandle = CTRL_initCtrl(estNumber,&ctrl,sizeof(ctrl));	//v1p7 format default
+#endif
+
+
+  {
+    CTRL_Version version;
+
+    // get the version number
+    CTRL_getVersion(ctrlHandle,&version);
+
+    gMotorVars.CtrlVersion = version;
+  }
+
+
+  // set the default controller parameters
+  CTRL_setParams(ctrlHandle,&gUserParams);
+
+
+  // setup faults
+  HAL_setupFaults(halHandle);
+
+
+  // initialize the interrupt vector table
+  HAL_initIntVectorTable(halHandle);
+
+
+  // enable the ADC interrupts
+  HAL_enableAdcInts(halHandle);
+
+
+  // enable global interrupts
+  HAL_enableGlobalInts(halHandle);
+
+
+  // enable debug interrupts
+  HAL_enableDebugInt(halHandle);
+
+
+  // disable the PWM
+  HAL_disablePwm(halHandle);
+
+  // initialize the ENC module
+  encHandle = ENC_init(&enc, sizeof(enc));
+
+  // setup the ENC module
+  ENC_setup(encHandle, 1, USER_MOTOR_NUM_POLE_PAIRS, USER_MOTOR_ENCODER_LINES, 0, USER_IQ_FULL_SCALE_FREQ_Hz, USER_ISR_FREQ_Hz, 8000.0);
+
+#ifdef DRV8301_SPI
+  // turn on the DRV8301 if present
+  HAL_enableDrv(halHandle);
+  // initialize the DRV8301 interface
+  HAL_setupDrvSpi(halHandle,&gDrvSpi8301Vars);
+#endif
+
+#ifdef DRV8305_SPI
+  // turn on the DRV8305 if present
+  HAL_enableDrv(halHandle);
+  // initialize the DRV8305 interface
+  HAL_setupDrvSpi(halHandle,&gDrvSpi8305Vars);
+#endif
+
+  // enable DC bus compensation
+  CTRL_setFlag_enableDcBusComp(ctrlHandle, true);
+
+  // initialize the CPU usage module
+  cpu_timeHandle = CPU_TIME_init(&cpu_time,sizeof(cpu_time));
+  CPU_TIME_setParams(cpu_timeHandle, (USER_SYSTEM_FREQ_KHz/USER_ISR_FREQ_kHz) - 100);
+
+  // compute scaling factors for flux and torque calculations
+  gFlux_pu_to_Wb_sf = USER_computeFlux_pu_to_Wb_sf();
+  gFlux_pu_to_VpHz_sf = USER_computeFlux_pu_to_VpHz_sf();
+  gTorque_Ls_Id_Iq_pu_to_Nm_sf = USER_computeTorque_Ls_Id_Iq_pu_to_Nm_sf();
+  gTorque_Flux_Iq_pu_to_Nm_sf = USER_computeTorque_Flux_Iq_pu_to_Nm_sf();
+
+  for(;;)
+  {
+    // Waiting for enable system flag to be set
+    while(!(gMotorVars.Flag_enableSys));
+
+    // Dis-able the Library internal PI.  Iq has no reference now
+    CTRL_setFlag_enableSpeedCtrl(ctrlHandle, false);
+
+    // loop while the enable system flag is true
+    while(gMotorVars.Flag_enableSys)
+      {
+        CTRL_Obj *obj = (CTRL_Obj *)ctrlHandle;
+
+        if(run_sensored)
+            gMotorVars.Flag_enableForceAngle = false;
+        else
+            gMotorVars.Flag_enableForceAngle = true;
+
+        EST_setFlag_enableForceAngle(obj->estHandle,gMotorVars.Flag_enableForceAngle);
+
+        // increment counters
+        gCounter_updateGlobals++;
+
+        // enable/disable the use of motor parameters being loaded from user.h
+        CTRL_setFlag_enableUserMotorParams(ctrlHandle,gMotorVars.Flag_enableUserParams);
+
+        gMotorVars.Flag_enableRsRecalc = ENCODER_PRESENT;
+        // enable/disable Rs recalibration during motor startup
+        EST_setFlag_enableRsRecalc(obj->estHandle,gMotorVars.Flag_enableRsRecalc);
+
+        // enable/disable automatic calculation of bias values
+        CTRL_setFlag_enableOffset(ctrlHandle,gMotorVars.Flag_enableOffsetcalc);
+
+
+        if(CTRL_isError(ctrlHandle))
+          {
+            // set the enable controller flag to false
+            CTRL_setFlag_enableCtrl(ctrlHandle,false);
+
+            // set the enable system flag to false
+            gMotorVars.Flag_enableSys = false;
+
+            // disable the PWM
+            HAL_disablePwm(halHandle);
+          }
+        else
+          {
+            // update the controller state
+            bool flag_ctrlStateChanged = CTRL_updateState(ctrlHandle);
+
+            // enable or disable the control
+            CTRL_setFlag_enableCtrl(ctrlHandle, gMotorVars.Flag_Run_Identify);
+
+            if(flag_ctrlStateChanged)
+              {
+                CTRL_State_e ctrlState = CTRL_getState(ctrlHandle);
+
+                if(ctrlState == CTRL_State_OffLine)
+                  {
+                    // enable the PWM
+                    HAL_enablePwm(halHandle);
+                  }
+                else if(ctrlState == CTRL_State_OnLine)
+                  {
+                    if(gMotorVars.Flag_enableOffsetcalc == true)
+                    {
+                      // update the ADC bias values
+                      HAL_updateAdcBias(halHandle);
+                    }
+                    else
+                    {
+                      // set the current bias
+                      HAL_setBias(halHandle,HAL_SensorType_Current,0,_IQ(I_A_offset));
+                      HAL_setBias(halHandle,HAL_SensorType_Current,1,_IQ(I_B_offset));
+                      HAL_setBias(halHandle,HAL_SensorType_Current,2,_IQ(I_C_offset));
+
+                      // set the voltage bias
+                      HAL_setBias(halHandle,HAL_SensorType_Voltage,0,_IQ(V_A_offset));
+                      HAL_setBias(halHandle,HAL_SensorType_Voltage,1,_IQ(V_B_offset));
+                      HAL_setBias(halHandle,HAL_SensorType_Voltage,2,_IQ(V_C_offset));
+                    }
+
+                    // Return the bias value for currents
+                    gMotorVars.I_bias.value[0] = HAL_getBias(halHandle,HAL_SensorType_Current,0);
+                    gMotorVars.I_bias.value[1] = HAL_getBias(halHandle,HAL_SensorType_Current,1);
+                    gMotorVars.I_bias.value[2] = HAL_getBias(halHandle,HAL_SensorType_Current,2);
+
+                    // Return the bias value for voltages
+                    gMotorVars.V_bias.value[0] = HAL_getBias(halHandle,HAL_SensorType_Voltage,0);
+                    gMotorVars.V_bias.value[1] = HAL_getBias(halHandle,HAL_SensorType_Voltage,1);
+                    gMotorVars.V_bias.value[2] = HAL_getBias(halHandle,HAL_SensorType_Voltage,2);
+
+                    // enable the PWM
+                    HAL_enablePwm(halHandle);
+                  }
+                else if(ctrlState == CTRL_State_Idle)
+                  {
+                    // disable the PWM
+                    HAL_disablePwm(halHandle);
+                    gMotorVars.Flag_Run_Identify = false;
+                  }
+
+                if((CTRL_getFlag_enableUserMotorParams(ctrlHandle) == true) &&
+                  (ctrlState > CTRL_State_Idle) &&
+                  (gMotorVars.CtrlVersion.minor == 6))
+                  {
+                    // call this function to fix 1p6
+                    USER_softwareUpdate1p6(ctrlHandle);
+                  }
+
+              }
+          }
+
+
+        if(EST_isMotorIdentified(obj->estHandle))
+          {
+            // set the current ramp
+            EST_setMaxCurrentSlope_pu(obj->estHandle,gMaxCurrentSlope);
+            gMotorVars.Flag_MotorIdentified = true;
+
+
+            if(Flag_Latch_softwareUpdate)
+            {
+              Flag_Latch_softwareUpdate = false;
+
+              USER_calcPIgains(ctrlHandle);
+
+              // initialize the watch window kp and ki current values with pre-calculated values
+              //gMotorVars.Kp_Idq = CTRL_getKp(ctrlHandle,CTRL_Type_PID_Id);
+              gMotorVars.Kp_Idq = _IQ(Kp_IDQ_TUNED);
+              //gMotorVars.Ki_Idq = CTRL_getKi(ctrlHandle,CTRL_Type_PID_Id);
+              gMotorVars.Ki_Idq = _IQ(Ki_IDQ_TUNED);
+            }
+
+          }
+        else
+          {
+            Flag_Latch_softwareUpdate = true;
+
+            // the estimator sets the maximum current slope during identification
+            gMaxCurrentSlope = EST_getMaxCurrentSlope_pu(obj->estHandle);
+          }
+
+
+        // when appropriate, update the global variables
+        if(gCounter_updateGlobals >= NUM_MAIN_TICKS_FOR_GLOBAL_VARIABLE_UPDATE)
+          {
+            // reset the counter
+            gCounter_updateGlobals = 0;
+
+            updateGlobalVariables_motor(ctrlHandle);
+          }
+
+            // ********** START user code goes here - non time critical code ***********
+//            if(send_serial)
+//            {
+//                if (HAL_getTxFifoStatusSCIB(halHandle) == SCI_FifoStatus_Empty)
+//                {
+//                    packet_send[0] = Position_Packet_Header;
+//                    packet_send[1] = (ball_position >> 8) & 0x000000FF ;
+//                    packet_send[2] = ball_position & 0x000000FF ;
+//                    CRCByte = getCRCArray(packet_send,3);
+//                    HAL_writeSCIBFIFO(halHandle,packet_send[0]);
+//                    HAL_writeSCIBFIFO(halHandle,packet_send[1]);
+//                    HAL_writeSCIBFIFO(halHandle,packet_send[2]);
+//                    HAL_writeSCIBFIFO(halHandle,CRCByte);
+//                    send_serial = false;
+//                }
+//            }
+//
+//            if(read_serial)
+//            {
+//                if (HAL_getRxFifoStatusSCIB(halHandle) == SCI_FifoStatus_4_Words)
+//                {
+//                    packet_recieved[0] = (HAL_readSCIBFIFO(halHandle) & 0x00FF);
+//                    packet_recieved[1] = (HAL_readSCIBFIFO(halHandle) & 0x00FF);
+//                    packet_recieved[2] = (HAL_readSCIBFIFO(halHandle) & 0x00FF);
+//                    checkCRCByte       = (HAL_readSCIBFIFO(halHandle) & 0x00FF);
+//                    CRCByte = getCRCArray(packet_recieved,3);
+//                    read_serial = false;
+//                }
+//            }
+
+
+
+        // ********** END user code - non time critical code ***********
+
+        // update Iq reference
+        updateIqRef(ctrlHandle);
+
+        // update Kp and Ki gains
+        updateKpKiGains(ctrlHandle);
+
+        // run Rs online
+        //runRsOnLine(ctrlHandle);
+
+//        if(state_gpo_31_CANTX)
+//            HAL_setGpioHigh(halHandle,GPIO_Number_31);
+//        else
+//            HAL_setGpioLow(halHandle,GPIO_Number_31);
+//
+//        if(HAL_readGpio(halHandle,GPIO_Number_30))
+//            state_gpi_30_CANRX = true;
+//        else
+//            state_gpi_30_CANRX = false;
+//
+//        if(state_gpo_16_SPI_SIMO)
+//            HAL_setGpioHigh(halHandle,GPIO_Number_16);
+//        else
+//            HAL_setGpioLow(halHandle,GPIO_Number_16);
+//
+//        if(state_gpo_18_SPI_CLK)
+//            HAL_setGpioHigh(halHandle,GPIO_Number_18);
+//        else
+//            HAL_setGpioLow(halHandle,GPIO_Number_18);
+//
+//        if(state_gpo_19_SPI_STE)
+//            HAL_setGpioHigh(halHandle,GPIO_Number_19);
+//        else
+//            HAL_setGpioLow(halHandle,GPIO_Number_19);
+//
+//        if(HAL_readGpio(halHandle,GPIO_Number_17))
+//            state_gpi_17_SPI_SOMI = true;
+//        else
+//            state_gpi_17_SPI_SOMI = false;
+
+        if(state_gpo_40_relay_switch)
+            HAL_setGpioHigh(halHandle,GPIO_Number_40);
+        else
+            HAL_setGpioLow(halHandle,GPIO_Number_40);
+
+        // status flags for brake solenoid
+        if(solenoid_break_released)
+        {
+            HAL_setGpioHigh(halHandle,HAL_GPIO_SOLENOID_BRAKE); // turn solenoid on, releases brake
+        }
+        else
+        {
+            HAL_setGpioLow(halHandle,HAL_GPIO_SOLENOID_BRAKE);// turn solenoid off, engages brake
+        }
+
+
+        // --- begin ---- led display setup
+//        if(led_display_enabled)
+//        {
+//            if(led_display_setup_notdone)
+//            {
+//                // make the SPI-CSn for DRV8301 high to disable the spi interface to the DRV8301
+//                HAL_setGpioMode(halHandle,GPIO_Number_27,GPIO_27_Mode_GeneralPurpose);
+//                HAL_setGpioDirection(halHandle,GPIO_Number_27,GPIO_Direction_Output);
+//                HAL_setGpioHigh(halHandle,GPIO_Number_27);
+//                HAL_setupSpiB_redo(halHandle); // reduce clk frequency to 1Mhz;
+//                led_display_setup_notdone = false;
+//            }
+//        }
+        // --- end ---- led display setup
+
+        //  if(!led_display_enabled)
+        //  {
+        //      if(drv8301_setup_notdone)
+        //      {
+        //          // enable the SPI-CSn for DRV8301 to enable the spi interface to the DRV8301
+        //          HAL_setGpioMode(halHandle,GPIO_Number_27,GPIO_27_Mode_SPISTEB_NOT);
+        //          HAL_setupSpiB(halHandle); // change clk frequency back to 6Mhz;
+        //          drv8301_setup_notdone = false;
+        //          led_display_setup_notdone = true;
+        //      }
+        //  }
+
+
+        // enable/disable the forced angle
+        //EST_setFlag_enableForceAngle(obj->estHandle,gMotorVars.Flag_enableForceAngle);
+
+        // enable or disable power warp
+        //CTRL_setFlag_enablePowerWarp(ctrlHandle,gMotorVars.Flag_enablePowerWarp);
+
+#ifdef DRV8301_SPI
+        if(!led_display_enabled)
+        {
+            HAL_writeDrvData(halHandle,&gDrvSpi8301Vars);
+
+            HAL_readDrvData(halHandle,&gDrvSpi8301Vars);
+        }
+#endif
+#ifdef DRV8305_SPI
+        HAL_writeDrvData(halHandle,&gDrvSpi8305Vars);
+
+        HAL_readDrvData(halHandle,&gDrvSpi8305Vars);
+#endif
+      } // end of while(gFlag_enableSys) loop
+
+
+    // disable the PWM
+    HAL_disablePwm(halHandle);
+
+    // set the default controller parameters (Reset the control to re-identify the motor)
+    CTRL_setParams(ctrlHandle,&gUserParams);
+    gMotorVars.Flag_Run_Identify = false;
+
+  } // end of for(;;) loop
+
+} // end of main() function
+
+
+interrupt void mainISR(void) // gets called at 10khz ie 100us , it used to be 15khz ie every 66.6666667 us
+{
+  CTRL_Obj *obj = (CTRL_Obj *)ctrlHandle;
+  
+//  HAL_setGpioHigh(halHandle,GPIO_Number_22);
+
+  // timer 2 is used for CPU time diagnostics
+  // read the timer 2 value and update the CPU usage module
+  timer2Cnt = HAL_readTimerCnt(halHandle,2);
+  CPU_TIME_updateCnts(cpu_timeHandle,timer2Cnt);
+
+  // acknowledge the ADC interrupt
+  HAL_acqAdcInt(halHandle,ADC_IntNumber_1);
+  // convert the ADC data
+  HAL_readAdcData(halHandle,&gAdcData);
+  // read adc for bus current from dc battery
+  dc_bus_current_bits = HAL_readAnalogData(halHandle,ADC_ResultNumber_10); // value is 12-bit so varies from 0 to 4095
+  // read encoder value
+  gMotorVars.EncCount = HAL_getQepPosnCounts(halHandle,HAL_Qep_QEP1);
+
+  // serial data exchange between two motor controllers
+  if(enable_serial_exchange)
+  {
+      if(enable_serial_exchange_1)
+      {
+          send_packet_over_serial(halHandle);
+      }
+      if(enable_serial_exchange_1)
+      {
+          check_for_packet_received_over_serial(halHandle);
+      }
+  }
+  else
+  {
+      if(force_enabled && (gMotorVars.CtrlState == CTRL_State_OnLine) && (gMotorVars.EstState == EST_State_OnLine))
+      {
+          enable_serial_exchange = true;
+          HAL_setGpioHigh(halHandle,GPIO_Number_9); // releases the BLE module from reset, it was held in reset since powerup.
+          //          bypass_updateGlobalVariables = true;
+      }
+  }
+
+  if(start_ble_data_exchange)
+  {
+      if(enable_ble_recieve_data)
+      {
+          read_packet_over_ble(halHandle);
+      }
+      if(enable_ble_send_data)
+      {
+          send_packet_over_ble(halHandle);
+      }
+      if(call_send_command_to_ble_to_change_broadcasting)
+      {
+          send_command_to_ble_to_change_broadcasting(halHandle);
+      }
+  }
+
+  // computer dc bus current
+  dc_bus_current_inV = (dc_bus_current_bits + 1.0) * 0.0008085; // 4068/3.289 = 0.0008085. adc to vcc bus => 4068, not 4095 (bad layout), but adc to gnd => 0 ( looks good)
+  dc_bus_current_inA = dcbus_current_sensor_gain * (dc_bus_current_inV - dcbus_current_sensor_offset);
+
+  // load cell readings before tared
+  loadcell_front = HAL_readAnalogData(halHandle,ADC_ResultNumber_8); //   max value is 12-bit so varies from 0 to 4095
+  loadcell_rear  = HAL_readAnalogData(halHandle,ADC_ResultNumber_9); // max value is 12-bit so varies from 0 to 4095
+
+  battery_thermistor  = HAL_readAnalogData(halHandle,ADC_ResultNumber_11); // max value is 12-bit so varies from 0 to 4095
+  motor_thermistor  = HAL_readAnalogData(halHandle,ADC_ResultNumber_12); // max value is 12-bit so varies from 0 to 4095
+
+  // compute electrical angle using encoder
+  ENC_calcElecAngle(encHandle, gMotorVars.EncCount);
+  // get Electrical Angle through encoder used for Commutation
+  gMotorVars.EncAngle_iq =  ENC_getElecAngle(encHandle);
+  // get Mechanical Angle through encoder
+  // gMotorVars.MechAngle_iq =  ENC_getMechAngle(encHandle);
+  // get Electrical Angle through bemf / FAST
+  gMotorVars.BEMFAngle_iq = EST_getAngle_pu(obj->estHandle);
+
+
+//  if(log_sample)
+//  {
+//      if(_IQtoF(gMotorVars.Speed_krpm) > log_angle_speed_setting)
+//      {
+//          EncAngle_iq_log = gMotorVars.EncAngle_iq;
+//          BEMFAngle_iq_log = gMotorVars.BEMFAngle_iq;
+//          log_sample = false;
+//      }
+//  }
+
+  // run the controller // comment CTRL_run should be in ctrl.h file to be faster?
+  //CTRL_run(ctrlHandle,halHandle,&gAdcData,&gPwmData);
+  if (run_sensored)
+  {
+      CTRL_run(ctrlHandle,halHandle,&gAdcData,&gPwmData,gMotorVars.EncAngle_iq, IqRef_pu_pos_max,  IqRef_pu_neg_max);
+  }
+  else
+  {
+      if(forceangle)
+      {
+          CTRL_run(ctrlHandle,halHandle,&gAdcData,&gPwmData,forced_elec_angle_pu, IqRef_pu_pos_max, IqRef_pu_neg_max);
+      }
+      else
+      {
+          CTRL_run(ctrlHandle,halHandle,&gAdcData,&gPwmData,gMotorVars.BEMFAngle_iq, IqRef_pu_pos_max, IqRef_pu_neg_max);
+      }
+  }
+
+  // write the PWM compare values
+  HAL_writePwmData(halHandle,&gPwmData);
+
+  // setup the controller
+  CTRL_setup(ctrlHandle); // comment : should be in ctrl.h file to be faster?
+
+  // if we are forcing alignment, using the Rs Recalculation, align the eQEP angle with the rotor angle
+  if((EST_getState(obj->estHandle) == EST_State_Rs) && (USER_MOTOR_TYPE == MOTOR_Type_Pm))
+  {
+      //HAL_setQepPosnCounts(halHandle,HAL_Qep_QEP1,0);
+      HAL_setQepPosnCounts(halHandle,HAL_Qep_QEP1, USER_MOTOR_START_COUNT);
+      //ENC_setZeroOffset(encHandle, (uint32_t)(HAL_getQepPosnMaximum(halHandle,HAL_Qep_QEP1) - HAL_getQepPosnCounts(halHandle,HAL_Qep_QEP1)));
+  }
+
+  // ball position before and after its tared
+  if(tare_ball_position)
+  {
+      tare_ball_position = false;
+      ball_position_tared = true;
+      ball_position_offset = gMotorVars.EncCount - USER_MOTOR_START_COUNT;
+  }
+
+  if(ball_position_tared)
+  {
+      ball_position = gMotorVars.EncCount - ball_position_offset;
+  }
+  else
+  {
+      ball_position = gMotorVars.EncCount;
+  }
+
+//  ball_position_logged_prev = ball_position_logged;
+//  ball_position_logged = gMotorVars.EncCount;
+//
+//  ball_speed_prev = ball_speed;
+//  ball_speed = ball_position_logged - ball_position_logged_prev;
+//
+//  ball_accel_prev = ball_accel;
+//  ball_accel = ball_speed - ball_speed_prev;
+//
+//  ball_jerk = ball_accel - ball_accel_prev;
+
+  ball_position_mm = (((float)ball_position) * ticks_to_mm_conversion) - 410.0 + platform_to_roller_mm;
+  ball_position_other_motor_mm = (((float)ball_position_other_motor) * ticks_to_mm_conversion) - 410.0 + platform_to_roller_mm;
+
+//  loadcell_front_inV = (float)loadcell_front * threepointthreeVdiv4095 ; // 3.3v/4095 = 0.00080586
+//  loadcell_rear_inV  = (float)loadcell_rear * threepointthreeVdiv4095 ;
+//  loadcell_front_inlb = ((float)loadcell_front_slope * loadcell_front_inV) + (float)loadcell_front_intercept;
+//  loadcell_rear_inlb = ((float)loadcell_rear_slope * loadcell_rear_inV) + (float)loadcell_rear_intercept;
+
+  if(tare_load_cells)
+  {
+      tare_load_cells = false;
+      load_cells_tared = true;
+      loadcell_front_offset =  loadcell_front - loadcell_diff_window;
+      loadcell_rear_offset =  loadcell_rear - loadcell_diff_window;
+
+//      loadcell_front_offset_inlb = loadcell_front_inlb;
+//      loadcell_rear_offset_inlb = loadcell_rear_inlb;
+   }
+
+//  if(tare_load_cells_2)
+//  {
+//      tare_load_cells_2 = false;
+//      load_cells_tared_2 = true;
+//      loadcell_front_offset_inlb = loadcell_front_inlb;
+//      loadcell_rear_offset_inlb = loadcell_rear_inlb;
+//  }
+
+
+  if(load_cells_tared)
+  {
+      loadcell_front_tared = loadcell_front - loadcell_front_offset ;
+      loadcell_rear_tared = loadcell_rear - loadcell_rear_offset;
+
+//      loadcell_front_inlb_tared = loadcell_front_inlb - loadcell_front_offset_inlb;
+//      loadcell_rear_inlb_tared  = loadcell_rear_inlb - loadcell_rear_offset_inlb;
+  }
+  else
+  {
+      loadcell_front_tared = loadcell_front;
+      loadcell_rear_tared = loadcell_rear;
+
+//      loadcell_front_inlb_tared = loadcell_front_inlb;
+//      loadcell_rear_inlb_tared  = loadcell_rear_inlb;
+  }
+
+
+//  if(load_cells_tared_2)
+//  {
+//        loadcell_front_inlb_tared = loadcell_front_inlb - loadcell_front_offset_inlb;
+//        loadcell_rear_inlb_tared  = loadcell_rear_inlb - loadcell_rear_offset_inlb;
+//        loadcell_tared_sum = loadcell_front_inlb_tared + loadcell_rear_inlb_tared ;
+//  }
+//  else
+//  {
+//        loadcell_front_inlb_tared = loadcell_front_inlb;
+//        loadcell_rear_inlb_tared  = loadcell_rear_inlb;
+//        loadcell_tared_sum = loadcell_front_inlb + loadcell_rear_inlb ;
+//  }
+
+  // enable run time functioning with ble, ball position tared and load cells tared
+  if(enable_serial_exchange && (!startup_process_done))
+  {
+      if(tare_counter > 10000) // 1sec delay, 10k for 10khz
+      {
+          tare_ball_position = true;
+          tare_load_cells = true;
+          tare_load_cells_2 = true;
+          start_intialize_ble = true;
+          startup_process_done = true;
+          tare_counter = 0;
+      }
+      else
+      {
+          tare_counter++;
+      }
+  }
+
+  if(startup_process_done)
+  {
+      if(tare_counter == 40000) // 4 sec, made 40k for 10khz
+      {
+          tare_ball_position = true;
+          tare_counter = 0;
+      }
+      else
+      {
+          if(ball_position_mm > 150.0) // need to think through, if this can be a problem??
+          {
+              tare_counter = 0;
+          }
+          else
+          {
+              tare_counter++;
+          }
+      }
+  }
+
+  // intialize the ble before normal operation
+  if(start_intialize_ble)
+  {
+      intialize_ble(halHandle);
+  }
+
+  if(ble_intilization_done)
+  {
+      if(!start_ble_data_exchange)
+      {
+          enable_ble_recieve_data = true;
+          input_manual_not_from_ble = false;
+          start_ble_data_exchange = true;
+      }
+  }
+
+  // status flags
+  Status_motor = (((uint16_t)solenoid_break_released) << 7) + (((uint16_t)concentric_overloading_factor_enable) << 6) + (((uint16_t)eccentric_overloading_factor_enable) << 5) +
+                  (((uint16_t)platform_force_balanced) << 4) + (((uint16_t)check_platform_force_balance) << 3) + (((uint16_t)bar_stabilization_factor_enable) << 2) +
+                  (((uint16_t)force_enabled) << 1) + ((uint16_t)gMotorVars.Flag_Run_Identify);
+
+  if(button_enabled)
+  {
+      if(button1_delay_counter == 0)
+      {
+          if(HAL_readGpio(halHandle,HAL_GPIO_BUTTON1))
+          {
+              // do nothing.
+              button1_press_and_hold_detector = false;
+          }
+          else
+          {
+              if(button_counter > 5)
+              {
+                  button_counter--; // button 1 decrements by 1
+              }
+              if(!button1_press_and_hold_detector)
+              {     // single-click
+                  button1_delay_counter = button_delay_counter_max;
+                  button1_press_and_hold_detector = true;
+              }
+              else
+              {    // press-hold
+                  button1_delay_counter = (int)(button_delay_counter_max/5.0);
+              }
+          }
+      }
+      else
+      {
+          button1_delay_counter--;
+      }
+
+      if(button2_delay_counter == 0)
+      {
+          if(HAL_readGpio(halHandle,HAL_GPIO_BUTTON2))
+          {
+              // do nothing.
+              button2_press_and_hold_detector = false;
+          }
+          else
+          {
+              if(button_counter < 188)
+              {
+                  button_counter++; // button 2 increments by 1
+              }
+              if(!button2_press_and_hold_detector)
+              {     // single-click
+                  button2_delay_counter = button_delay_counter_max;
+                  button2_press_and_hold_detector = true;
+              }
+              else
+              {    // press-hold
+                  button2_delay_counter = (int)(button_delay_counter_max/3.0);
+              }
+          }
+      }
+      else
+      {
+          button2_delay_counter--;
+      }
+
+      three_digit_led_number = button_counter;
+  }
+
+//  calc_led_display_data1();
+//  calc_led_display_data2();
+
+  // --- begin ---- led display update
+//  if(led_display_enabled)
+//  {
+//      if(!led_display_setup_notdone)
+//      {
+//          if(led_display_step1)
+//          {
+//              HAL_setGpioLow(halHandle,GPIO_Number_22); // set RCK/Latch high
+//              calc_led_display_data1();
+//              HAL_writeSPIB(halHandle,led_display_data1); // tells which LEDs to be on and which to be off
+//              led_display_step1 = false;
+//              led_display_step2 = true;
+//          }
+//          else if(led_display_step2)
+//          {
+//              calc_led_display_data2();
+//              HAL_writeSPIB(halHandle,led_display_data2); // tells which LEDs to be on and which to be off
+//              led_display_step2 = false;
+//              led_display_step3 = true;
+//          }
+//          else if(led_display_step3)
+//          {
+//              HAL_setGpioHigh(halHandle,GPIO_Number_22); // set RCK/Latch Low to take effect ie leds on or off.
+//              led_display_step3 = false;
+//              led_display_step1 = true;
+//          }
+//      }
+//  }
+  // --- end ---- led display code
+
+
+  // sensing kill switch (with debounce delay) to enable and disable force
+  if(use_kill_switch_for_enable)
+  {
+      if(force_enable_delay == 0)
+      {
+          if(HAL_readGpio(halHandle,GPIO_Number_32)) // spi-simo pin on isolated spi bus used for switch
+          {
+              // do_nothing
+          }
+          else
+          {
+              if(force_enabled)
+              {
+                  force_enabled = false;
+              }
+              else
+              {
+                  force_enabled = true;
+              }
+              force_enable_delay = 6667; // was 10k for 15kz, made this 6.667 for 10kz
+          }
+      }
+      else
+      {
+          // force enable switch stays disabled for 2.22222 secs
+          force_enable_delay--;
+      }
+  }
+  else
+  {
+      // set force_enabled by hand on ti UI
+  }
+
+  if(sw_to_led_solenoid_test)
+  {
+      if(sw_to_led_solenoid_test_delay == 0)
+      {
+          if(HAL_readGpio(halHandle,GPIO_Number_33)) //
+          {
+              // do_nothing
+          }
+          else
+          {
+              if(solenoid_break_released)
+              {
+                  solenoid_break_released = false;
+              }
+              else
+              {
+                  solenoid_break_released = true;
+              }
+              sw_to_led_solenoid_test_delay = 6667; // was 10k for 15kz, made this 6.667 for 10kz
+          }
+      }
+      else
+      {
+          // switch input disabled for 2.22222 secs
+          sw_to_led_solenoid_test_delay--;
+      }
+  }
+  else
+  {
+      // set sw_to_led_solenoid_test by hand on ti UI
+  }
+
+
+  // to automate startup on first enable of kill switch
+  if(automate_startup && force_enabled)
+  {
+      if(!startup_process_done)
+      {
+          gMotorVars.Flag_Run_Identify = true;
+      }
+  }
+
+  // enable force for various modes like 1) kill switch on/off 2) platform sensing on/off 2) foot location on platform
+  if(force_enabled)
+  {
+      if(check_platform_force_balance)
+      {
+          if(platform_force_balanced_counter == 0)
+          {
+              platform_force_balanced_counter = 3333; // was 5k for 15kz, made this 3.333k for 10kz
+              if(platform_force_balanced)
+              {
+                  IqRef_A_set =  IqRef_A_desired;
+                  force_flag = true;
+              }
+              else
+              {
+                  IqRef_A_set =  _IQ(IqRef_A_min_limit);
+                  force_flag = false;
+              }
+          }
+          else
+          {
+              platform_force_balanced_counter--;
+          }
+      }
+      else
+      {
+          force_flag = true;
+          IqRef_A_set =  IqRef_A_desired;
+      }
+  }
+  else
+  {
+      IqRef_A_set =  _IQ(IqRef_A_min_limit);
+      force_flag = false;
+  }
+
+
+  // ---  begin --- add slew rate to any force command changes, so force doesnt change suddenly
+  if((EST_getState(obj->estHandle) == EST_State_OnLine) && (CTRL_getState(ctrlHandle) == CTRL_State_OnLine))
+  {
+      if (IqRef_A_set == gMotorVars.IqRef_A)
+      {
+          // do nothing
+      }
+      else
+      {
+          if( (_IQtoF(IqRef_A_set) - _IQtoF(gMotorVars.IqRef_A)) > 0.0004  )
+          {
+              gMotorVars.IqRef_A = gMotorVars.IqRef_A + _IQ(0.0004);
+          }
+          else
+          {
+              if( (_IQtoF(IqRef_A_set) - _IQtoF(gMotorVars.IqRef_A)) < -0.0002  )
+              {
+                  gMotorVars.IqRef_A = gMotorVars.IqRef_A - _IQ(0.0002);
+              }
+              else
+              {
+                  gMotorVars.IqRef_A = IqRef_A_set;
+              }
+          }
+      }
+  }
+  // ---  end --- add slew rate to any force command changes, so force doesnt change suddenly
+  // needs to be optimized to feel faster.
+
+  if(log_init)
+  {
+      if(log_array_pos < log_array_length)
+      {
+//          log_dc_bus_current_A[log_array_pos] = 0.0f;
+//          log_dc_bus_voltage_V[log_array_pos] = 0.0f;
+//          log_ball_position_mm[log_array_pos] = 0.0f;
+          log_ball_position[log_array_pos] = 0.0f;
+          log_ball_speed[log_array_pos] = 0.0f;
+          log_ball_accel[log_array_pos] = 0.0f;
+//          log_ball_jerk[log_array_pos] = 0.0f;
+          log_wt_lb_measured[log_array_pos] = 0.0f;
+          log_motor_speed_krpm[log_array_pos] = 0.0f;
+//          log_motor_Vq[log_array_pos] = 0.0f;
+          log_array_pos++;
+      }
+      else
+      {
+          log_init = false;
+          log_array_pos = 0;
+      }
+  }
+
+  if(ball_position_mm > 203.0)
+  {
+      if(log_array_start && (!log_array))
+      {
+          log_array = true;
+          log_array_start = false;
+      }
+  }
+
+  if(log_array)
+  {
+      if(log_array_pos < log_array_length)
+      {
+          if(log_counter == 10)
+          {
+//              log_dc_bus_current_A[log_array_pos] = dc_bus_current_inA;
+//              log_dc_bus_voltage_V[log_array_pos] = battery_voltage_V;
+//              log_ball_position_mm[log_array_pos] = ball_position_mm;
+              log_ball_position[log_array_pos] = (float)ball_position_logged;
+              ball_speed_ma = ball_speed_ma + (float)ball_speed;
+              log_ball_speed[log_array_pos] = ball_speed_ma;
+              log_ball_accel[log_array_pos] = (float)ball_accel;
+//              log_ball_jerk[log_array_pos] = (float)ball_jerk;
+              log_wt_lb_measured[log_array_pos] = wt_lb_measured;
+              log_motor_speed_krpm[log_array_pos] = _IQtoF(gMotorVars.Speed_krpm);
+//              log_motor_Vq[log_array_pos] = _IQtoF(gMotorVars.Vq);
+              log_array_pos++;
+              log_counter = 1;
+              ball_speed_ma = 0.0f;
+          }
+          else
+          {
+              ball_speed_ma = ball_speed_ma + (float)ball_speed;
+              log_counter++;
+          }
+      }
+      else
+      {
+          log_array = false;
+          log_array_pos = 0;
+      }
+  }
+
+  // toggle status LED
+  if(++gLEDcnt >= (uint_least32_t)(USER_ISR_FREQ_Hz / LED_BLINK_FREQ_Hz))
+  {
+    HAL_toggleLed(halHandle,(GPIO_Number_e)HAL_Gpio_LED10);
+    gLEDcnt = 0;
+  }
+
+
+// millisecond counter for timestamp
+    if(ms_counter == 10) // was 15 for 15khz, made 10 for 10khz
+    {
+      ms_counter = 1;
+      timestamp++;
+      sec_counter++;
+    }
+    else
+    {
+      ms_counter++;
+    }
+
+  // second counter for timestamp
+    if(sec_counter == 1000)
+    {
+        sec_counter = 1;
+        timestamp_sec++;
+    }
+
+    if((battery_voltage_centiV > Undervoltage_bus_centiV) && relay_switch_enabled)
+    {
+        if(relay_switch_counter == 10000) // 1 sec delay
+        {
+            state_gpo_40_relay_switch = true;
+        }
+        else
+        {
+            relay_switch_counter++;
+        }
+    }
+    else
+    {
+        relay_switch_counter = 0;
+        state_gpo_40_relay_switch = false;
+    }
+
+    // read the timer 2 value and update the CPU usage module
+    timer2Cnt = HAL_readTimerCnt(halHandle,2);
+    CPU_TIME_run(cpu_timeHandle,timer2Cnt);
+
+//    HAL_setGpioLow(halHandle,GPIO_Number_22);
+
+  return;
+} // end of mainISR() function
+
+
+void updateGlobalVariables_motor(CTRL_Handle handle)
+{
+  CTRL_Obj *obj = (CTRL_Obj *)handle;
+  uint16_t delta = 0;
+
+
+  // load cell readings to enable on/off using foot location sensing
+  if(loadcell_front_tared > loadcell_rear_tared)
+      delta = loadcell_front_tared - loadcell_rear_tared;
+  else
+      delta = loadcell_rear_tared - loadcell_front_tared;
+  delta_fraction_front_rear = ((float) delta) / (loadcell_front_tared + loadcell_rear_tared);
+  if(delta_fraction_front_rear > min_balance_fraction)
+      front_rear_balanced = false;
+  else
+      front_rear_balanced = true;
+
+  if(loadcell_front_other_motor > loadcell_rear_other_motor)
+      delta = loadcell_front_other_motor - loadcell_rear_other_motor;
+  else
+      delta = loadcell_rear_other_motor - loadcell_front_other_motor;
+  delta_fraction_front_rear_other_motor = ((float) delta) /(loadcell_front_other_motor + loadcell_rear_other_motor);
+  if(delta_fraction_front_rear_other_motor > min_balance_fraction)
+      front_rear_other_motor_balanced = false;
+  else
+      front_rear_other_motor_balanced = true;
+
+  if(loadcell_front_tared > loadcell_front_other_motor)
+      delta = loadcell_front_tared - loadcell_front_other_motor;
+  else
+      delta = loadcell_front_other_motor - loadcell_front_tared;
+  delta_fraction_left_right_front = ((float) delta )/(loadcell_front_tared + loadcell_front_other_motor);
+  if(delta_fraction_left_right_front > min_balance_fraction)
+      left_right_front_balanced = false;
+  else
+      left_right_front_balanced = true;
+
+  if(loadcell_rear_tared > loadcell_rear_other_motor)
+      delta = loadcell_rear_tared - loadcell_rear_other_motor;
+  else
+      delta = loadcell_rear_other_motor - loadcell_rear_tared;
+  delta_fraction_left_right_rear =  ((float) delta)/(loadcell_rear_tared + loadcell_rear_other_motor);
+  if(delta_fraction_left_right_rear > min_balance_fraction)
+      left_right_rear_balanced = false;
+  else
+      left_right_rear_balanced = true;
+
+    platform_force_balanced = front_rear_balanced & front_rear_other_motor_balanced & left_right_front_balanced & left_right_rear_balanced ;
+//    platform_force_balanced = front_rear_balanced & front_rear_other_motor_balanced;
+
+  person_height_mm = (person_height_feet * 12.0 + person_height_addn_inches) * 25.4 ;
+
+
+
+  if(!input_manual_not_from_ble)
+  {
+      if(nominal_force_setting_input_over_ble_left_centiLbs < wt_centi_lb_default)
+          nominal_force_setting_input_over_ble_left_centiLbs = wt_centi_lb_default;
+      if(nominal_force_setting_input_over_ble_left_centiLbs > wt_centi_lb_max_limit)
+          nominal_force_setting_input_over_ble_left_centiLbs = wt_centi_lb_max_limit;
+      if(nominal_force_setting_input_over_ble_right_centiLbs < wt_centi_lb_default)
+          nominal_force_setting_input_over_ble_right_centiLbs = wt_centi_lb_default;
+      if(nominal_force_setting_input_over_ble_right_centiLbs > wt_centi_lb_max_limit)
+          nominal_force_setting_input_over_ble_right_centiLbs = wt_centi_lb_max_limit;
+
+      if(!ble_central_host_connected)
+      {
+          nominal_force_setting_input_over_ble_left_centiLbs = wt_centi_lb_default;
+          nominal_force_setting_input_over_ble_right_centiLbs = wt_centi_lb_default;
+          bar_stabilization_factor_enable = false;
+          check_platform_force_balance = false;
+      }
+      wt_centi_lb = nominal_force_setting_input_over_ble_left_centiLbs;
+      wt_centi_lb_other_motor = nominal_force_setting_input_over_ble_right_centiLbs;
+  }
+  
+
+  wt_lb = wt_centi_lb / 100.0;
+  //IqRef_A_desired = _IQ(- 10.0 - ((wt_lb - 21.45)/2.145));
+  IqRef_A_desired = _IQ(-wt_lb * 0.5);
+
+  if(!bypass_updateGlobalVariables)
+  {
+
+      // get encoder count max
+      gMotorVars.EncCountMax =  HAL_getQepPosnMaximum(halHandle,HAL_Qep_QEP1);
+
+      // get the real time speed reference coming out of the speed trajectory generator
+      gMotorVars.SpeedTraj_krpm = _IQmpy(CTRL_getSpd_int_ref_pu(handle),EST_get_pu_to_krpm_sf(obj->estHandle));
+
+      // get the torque estimate
+      gMotorVars.Torque_Nm = USER_computeTorque_Nm(handle, gTorque_Flux_Iq_pu_to_Nm_sf, gTorque_Ls_Id_Iq_pu_to_Nm_sf);
+
+      // get the rotor resistance
+      gMotorVars.Rr_Ohm = EST_getRr_Ohm(obj->estHandle);
+
+      // get the stator resistance
+      gMotorVars.Rs_Ohm = EST_getRs_Ohm(obj->estHandle);
+
+      // get the stator resistance online
+      gMotorVars.RsOnLine_Ohm = EST_getRsOnLine_Ohm(obj->estHandle);
+
+      // get the stator inductance in the direct coordinate direction
+      gMotorVars.Lsd_H = EST_getLs_d_H(obj->estHandle);
+
+      // get the stator inductance in the quadrature coordinate direction
+      gMotorVars.Lsq_H = EST_getLs_q_H(obj->estHandle);
+
+  }
+
+  // get the flux in V/Hz in floating point
+  gMotorVars.Flux_VpHz = EST_getFlux_VpHz(obj->estHandle);
+
+  // get the magnetizing current
+  gMotorVars.MagnCurr_A = EST_getIdRated(obj->estHandle);
+
+  // get the flux in Wb in fixed point
+  gMotorVars.Flux_Wb = USER_computeFlux(handle, gFlux_pu_to_Wb_sf);
+
+  // get the speed estimate
+  gMotorVars.Speed_krpm = EST_getSpeed_krpm(obj->estHandle);
+
+  // get the controller state
+  gMotorVars.CtrlState = CTRL_getState(handle);
+
+  // get the estimator state
+  gMotorVars.EstState = EST_getState(obj->estHandle);
+
+  // read Vd and Vq vectors per units
+  gMotorVars.Vd = CTRL_getVd_out_pu(ctrlHandle);
+  gMotorVars.Vq = CTRL_getVq_out_pu(ctrlHandle);
+
+  // calculate vector Vs in per units
+  gMotorVars.Vs = _IQsqrt(_IQmpy(gMotorVars.Vd, gMotorVars.Vd) + _IQmpy(gMotorVars.Vq, gMotorVars.Vq));
+
+  // read Id and Iq vectors in amps
+  gMotorVars.Id_A = _IQmpy(CTRL_getId_in_pu(ctrlHandle), _IQ(USER_IQ_FULL_SCALE_CURRENT_A));
+  gMotorVars.Iq_A = _IQmpy(CTRL_getIq_in_pu(ctrlHandle), _IQ(USER_IQ_FULL_SCALE_CURRENT_A));
+
+
+//  wt_lb_measured = 21.45 - ((_IQtoF(gMotorVars.Iq_A) + 10.0) * 2.145);
+  //wt_lb_measured = 21.45 - ((_IQtoF(iq_var_A_display) + 10.0) * 2.145);
+  wt_lb_measured = -(_IQtoF(iq_var_A_display))*2.0;
+  wt_centi_lb_measured = (uint16_t)(wt_lb_measured * 100.0); // comment convert this to IQmath
+
+  // calculate vector Is in amps
+  gMotorVars.Is_A = _IQsqrt(_IQmpy(gMotorVars.Id_A, gMotorVars.Id_A) + _IQmpy(gMotorVars.Iq_A, gMotorVars.Iq_A));
+
+  // Get the DC buss voltage
+  gMotorVars.VdcBus_kV = _IQmpy(gAdcData.dcBus,_IQ(USER_IQ_FULL_SCALE_VOLTAGE_kV));
+  battery_voltage_centiV = (uint16_t)(_IQtoF(gMotorVars.VdcBus_kV) * 100000.0);
+
+//  battery_voltage_V = _IQtoF(gMotorVars.VdcBus_kV) * 1000.0;
+//  dc_bus_current_inA = ((dc_bus_current_bits * 0.0303) - 63.0);
+//  Battery_Power_W = battery_voltage_V * dc_bus_current_inA;
+
+  Thermistor_reading_bits  = HAL_readAnalogData(halHandle,ADC_ResultNumber_12); // value is 12-bit so varies from 0 to 4095
+  Thermistor_deg_C = (-0.000000004 * Thermistor_reading_bits * Thermistor_reading_bits * Thermistor_reading_bits) + (0.00003 * Thermistor_reading_bits * Thermistor_reading_bits) - (0.0972 * Thermistor_reading_bits) + 152.11;
+
+  return;
+} // end of updateGlobalVariables_motor() function
+
+
+void updateIqRef(CTRL_Handle handle)
+{
+  _iq iq_var = _IQ(0.0);
+  float dX;
+
+  // managing start force position
+  if(read_from_manual_or_ble_but_not_from_other_motor)
+  {
+      if(input_manual_not_from_ble)
+      {
+         start_force_position_mm = (uint16_t)(person_height_mm * start_force_fraction_person_height);
+      }
+      else
+      {
+          if(!ble_central_host_connected)
+              start_force_position_mm = platform_to_roller_mm;
+      }
+
+      if(start_force_position_mm < platform_to_roller_mm)
+          start_force_position_mm = platform_to_roller_mm;
+      if(start_force_position_mm > start_force_position_mm_max)
+          start_force_position_mm = start_force_position_mm_max; // 8 feet
+
+      start_force_position_mm_used = start_force_position_mm - platform_to_roller_mm;
+      start_force_turn = USER_MOTOR_START_TURN + ((float)start_force_position_mm_used * reciprocal_CIRCUMFERENCE_1TURN_mm);
+      start_force_position = (start_force_turn*USER_COUNT_1TURN) - 1;
+  }
+  
+  start_force_position_sent = start_force_position >> 1;
+
+  start_force_position_from_other_motor = start_force_position_from_other_motor_recieved << 1;
+  start_force_turn_other_motor = ((float)(start_force_position_from_other_motor +  1)) * USER_1_BY_1TURN;
+  start_force_position_from_other_motor_mm_used = (uint16_t)((start_force_turn_other_motor - USER_MOTOR_START_TURN) * CIRCUMFERENCE_1TURN_mm);
+  start_force_position_from_other_motor_mm = start_force_position_from_other_motor_mm_used + platform_to_roller_mm;
+
+  if(start_force_position < USER_MOTOR_START_COUNT)
+      start_force_position = USER_MOTOR_START_COUNT;
+
+  if(start_force_position > start_force_position_max)
+      start_force_position = start_force_position_max;
+
+// code for force above start force position
+  if (run_sensored)
+  {
+      if(ball_position < start_force_position)
+      {
+          iq_var = _IQmpy(_IQ(IqRef_A_min_limit),_IQ(1.0/USER_IQ_FULL_SCALE_CURRENT_A));
+          allow_bar_stabilization = true;
+      }
+      else
+      {
+          if(ball_position < (start_force_position + USER_COUNT_1TURN))
+          {
+              allow_bar_stabilization = true;
+              dX = (ball_position - start_force_position)*USER_1_BY_1TURN;
+              iq_var = gMotorVars.IqRef_A - _IQ(IqRef_A_min_limit);
+              iq_var = _IQmpy((_IQ(IqRef_A_min_limit) + _IQmpy(iq_var,_IQ(dX))) ,_IQ(1.0/USER_IQ_FULL_SCALE_CURRENT_A));
+          }
+          else
+          {
+              iq_var = _IQmpy(gMotorVars.IqRef_A,_IQ(1.0/USER_IQ_FULL_SCALE_CURRENT_A));
+              allow_bar_stabilization = true;
+          }
+      }
+  }
+  else
+  {
+      iq_var = _IQmpy(gMotorVars.IqRef_A,_IQ(1.0/USER_IQ_FULL_SCALE_CURRENT_A));
+  }
+
+  // code for concentric overloading - so that it feels like virtual inertia, though in fact its just viscous damping
+  if(_IQtoF(gMotorVars.Speed_krpm) > concentric_overloading_speed_setting)
+  {
+      if(concentric_overloading_factor_enable)
+      {
+          concentric_overloading_factor = 1.0 + ((concentric_overloading_factor_rate/0.05)*(_IQtoF(gMotorVars.Speed_krpm) - concentric_overloading_speed_setting));
+      }
+      else
+      {
+          concentric_overloading_factor = 1.0;
+      }
+      iq_var = _IQmpy(iq_var,_IQ(concentric_overloading_factor));
+  }
+
+
+  // active stabilization to keep bar horizontal
+  delta_ball_position = ball_position - ball_position_other_motor;
+  if(bar_stabilization_factor_enable && allow_bar_stabilization)
+  {
+      bar_stabilization_factor = 1.0 +  (delta_ball_position * bar_stabilization_factor_rate);
+      if(bar_stabilization_factor < 0.3)
+          bar_stabilization_factor = 0.3;
+      if(bar_stabilization_factor > 1.7)
+          bar_stabilization_factor = 1.7;
+      if(ball_position > start_force_position)
+      {
+          iq_var = _IQmpy(iq_var,_IQ(bar_stabilization_factor));
+      }
+  }
+
+  // not used in normal operation. only for advanced application needs
+  if(gMotorVars.Flag_enableForceAngle)
+  {
+  // set the speed reference so that the forced angle rotates in the correct direction for startup
+  if(_IQabs(gMotorVars.Speed_krpm) < _IQ(0.01))
+    {
+      if(iq_var < _IQ(0.0))
+        {
+          CTRL_setSpd_ref_krpm(handle,_IQ(-0.01));
+        }
+      else if(iq_var > _IQ(0.0))
+        {
+          CTRL_setSpd_ref_krpm(handle,_IQ(0.01));
+        }
+    }
+  }
+
+
+  // to display the torque expected to be created by motor.
+  // the actual torque created may vary a tiny bit based on motor speed and current sensor noise, controller lag, error in electrical angle
+  iq_var_A_display = _IQmpy(iq_var, _IQ(USER_IQ_FULL_SCALE_CURRENT_A));
+
+  // makes sure the current requested is never above the max current that saturates the motor
+  if((_IQtoF(iq_var_A_display)) < IqRef_A_max_limit) // convert these to IQmath comparisons
+  {
+      iq_var_A_display = _IQ(IqRef_A_max_limit);
+      iq_var = _IQmpy(iq_var_A_display,_IQ(1.0/USER_IQ_FULL_SCALE_CURRENT_A));
+  }
+
+  if((_IQtoF(iq_var_A_display)) > IqRef_A_min_limit)
+  {
+      iq_var_A_display = _IQ(IqRef_A_min_limit);
+      iq_var = _IQmpy(iq_var_A_display,_IQ(1.0/USER_IQ_FULL_SCALE_CURRENT_A));
+  }
+
+  // Set the Iq reference that use to come out of the PI speed control
+  CTRL_setIq_ref_pu(handle, iq_var);
+
+
+  return;
+} // end of updateIqRef() function
+
+
+void updateKpKiGains(CTRL_Handle handle)
+{
+  if((gMotorVars.CtrlState == CTRL_State_OnLine) && (gMotorVars.Flag_MotorIdentified == true) && (Flag_Latch_softwareUpdate == false))
+    {
+      // set the kp and ki current values for Id and Iq from the watch window
+      CTRL_setKp(handle,CTRL_Type_PID_Id,gMotorVars.Kp_Idq);
+      CTRL_setKi(handle,CTRL_Type_PID_Id,gMotorVars.Ki_Idq);
+      CTRL_setKp(handle,CTRL_Type_PID_Iq,gMotorVars.Kp_Idq);
+      CTRL_setKi(handle,CTRL_Type_PID_Iq,gMotorVars.Ki_Idq);
+	}
+
+  return;
+} // end of updateKpKiGains() function
+
+
+void runRsOnLine(CTRL_Handle handle)
+{
+  CTRL_Obj *obj = (CTRL_Obj *)handle;
+
+  // execute Rs OnLine code
+  if(gMotorVars.Flag_Run_Identify == true)
+    {
+      if(EST_getState(obj->estHandle) == EST_State_OnLine)
+        {
+          float_t RsError_Ohm = gMotorVars.RsOnLine_Ohm - gMotorVars.Rs_Ohm;
+
+          EST_setFlag_enableRsOnLine(obj->estHandle,true);
+          EST_setRsOnLineId_mag_pu(obj->estHandle,_IQmpy(gMotorVars.RsOnLineCurrent_A,_IQ(1.0/USER_IQ_FULL_SCALE_CURRENT_A)));
+
+          if(abs(RsError_Ohm) < (gMotorVars.Rs_Ohm * 0.05))
+            {
+              EST_setFlag_updateRs(obj->estHandle,true);
+            }
+        }
+      else
+        {
+          EST_setRsOnLineId_mag_pu(obj->estHandle,_IQ(0.0));
+          EST_setRsOnLineId_pu(obj->estHandle,_IQ(0.0));
+          EST_setRsOnLine_pu(obj->estHandle, EST_getRs_pu(obj->estHandle));
+          EST_setFlag_enableRsOnLine(obj->estHandle,false);
+          EST_setFlag_updateRs(obj->estHandle,false);
+          EST_setRsOnLine_qFmt(obj->estHandle,EST_getRs_qFmt(obj->estHandle));
+        }
+    }
+
+  return;
+} // end of runRsOnLine() function
+
+//@} //defgroup
+// end of file
+
+
+
